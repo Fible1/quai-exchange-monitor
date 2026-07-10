@@ -317,18 +317,26 @@ function tagAddress(addr) {
 }
 
 // --- Push via ntfy.sh ---------------------------------------------------
-async function sendPush(title, body) {
+async function sendPush(title, body, tags = "rotating_light,whale") {
   const topic = process.env.NTFY_TOPIC;
   if (!topic) return;
-  await fetch(`https://ntfy.sh/${topic}`, {
-    method: "POST",
-    headers: {
-      Title: title,
-      Priority: "high",
-      Tags: "rotating_light,whale",
-    },
-    body,
-  });
+  // HTTP headers are Latin-1 only — emoji/unicode in the Title header throws.
+  // ntfy renders emoji via the Tags header instead (e.g. "zap" -> ⚡).
+  const safeTitle = title.replace(/[^\x20-\x7E]/g, "").replace(/\s+/g, " ").trim();
+  try {
+    await fetchWithTimeout(`https://ntfy.sh/${topic}`, {
+      method: "POST",
+      headers: {
+        Title: safeTitle,
+        Priority: "high",
+        Tags: tags,
+      },
+      body,
+    }, 8000);
+  } catch (e) {
+    // A push failure must never fail the run (or silence the heartbeat).
+    console.error("ntfy push failed:", e);
+  }
 }
 
 // --- Handler ------------------------------------------------------------
@@ -589,10 +597,11 @@ module.exports = async (req, res) => {
           ? "Divergence: outflow + price up"
           : "Divergence: inflow + price down";
       await sendPush(
-        `⚡ ${headline}`,
+        headline,
         `Last hour: ${Math.round(Math.abs(c.flow1h)).toLocaleString("en-US")} QUAI ${flowDir} ` +
           `while price ${priceDir} ${Math.abs(c.pricePct).toFixed(2)}%\n` +
-          `$${c.fromPrice} → $${c.toPrice}`
+          `$${c.fromPrice} → $${c.toPrice}`,
+        "zap"
       );
     }
 
