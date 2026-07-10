@@ -46,6 +46,9 @@ const WHALE_DEFAULT_PCT = 0.5;
 const WHALE_KEEP = 50;              // feed length
 const MAX_BLOCKS_PER_RUN = 120;     // cap per 5-min cycle
 const RPC_BATCH_SIZE = 25;          // blocks per batched RPC call
+// Private watchlist (any-size incoming tx alerts) lives in Redis config as
+// config.watchedAddresses = [{addr, label}] — managed from the admin page.
+// It is never written to public state; alerts go to push/email only.
 
 // --- Upstash Redis (REST) ---------------------------------------------
 const REDIS_URL =
@@ -255,7 +258,7 @@ function blockTimestamp(block) {
 
 // Scan blocks (cursor..head] for transfers >= thresholdQuai. Returns
 // { found, lastBlock, scanned, skipped } — cursor only advances on success.
-async function scanWhaleTxs(prevCursor, head, thresholdQuai) {
+async function scanWhaleTxs(prevCursor, head, thresholdQuai, watchMap = {}) {
   let from = prevCursor + 1;
   let skipped = 0;
   if (head - from + 1 > MAX_BLOCKS_PER_RUN) {
@@ -263,6 +266,7 @@ async function scanWhaleTxs(prevCursor, head, thresholdQuai) {
     from = head - MAX_BLOCKS_PER_RUN + 1;
   }
   const found = [];
+  const incoming = [];
   let scanned = 0;
 
   for (let start = from; start <= head; start += RPC_BATCH_SIZE) {
@@ -293,20 +297,35 @@ async function scanWhaleTxs(prevCursor, head, thresholdQuai) {
         } catch (_) {
           continue;
         }
+        const toAddr = (tx.to || "").toLowerCase();
+        const fromAddr = (tx.from || "").toLowerCase();
+
         if (quai >= thresholdQuai) {
           found.push({
             t: ts || new Date().toISOString(),
             block: item.id,
             hash: tx.hash,
-            from: (tx.from || "").toLowerCase(),
-            to: (tx.to || "").toLowerCase(),
+            from: fromAddr,
+            to: toAddr,
             quai,
+          });
+        }
+        // Any-size incoming transaction to a privately watched address
+        if (watchMap[toAddr]) {
+          incoming.push({
+            t: ts || new Date().toISOString(),
+            block: item.id,
+            hash: tx.hash,
+            from: fromAddr,
+            to: toAddr,
+            quai,
+            label: watchMap[toAddr],
           });
         }
       }
     }
   }
-  return { found, lastBlock: head, scanned, skipped };
+  return { found, incoming, lastBlock: head, scanned, skipped };
 }
 
 function tagAddress(addr) {
@@ -317,20 +336,23 @@ function tagAddress(addr) {
 }
 
 // --- Push via ntfy.sh ---------------------------------------------------
-async function sendPush(title, body, tags = "rotating_light,whale") {
+async function sendPush(title, body, tags = "rotating_light,whale", email = false) {
   const topic = process.env.NTFY_TOPIC;
   if (!topic) return;
   // HTTP headers are Latin-1 only — emoji/unicode in the Title header throws.
   // ntfy renders emoji via the Tags header instead (e.g. "zap" -> ⚡).
   const safeTitle = title.replace(/[^\x20-\x7E]/g, "").replace(/\s+/g, " ").trim();
+  const headers = {
+    Title: safeTitle,
+    Priority: "high",
+    Tags: tags,
+  };
+  // Optional email copy of this notification (ntfy Email header).
+  if (email && process.env.ALERT_EMAIL) headers.Email = process.env.ALERT_EMAIL;
   try {
     await fetchWithTimeout(`https://ntfy.sh/${topic}`, {
       method: "POST",
-      headers: {
-        Title: safeTitle,
-        Priority: "high",
-        Tags: tags,
-      },
+      headers,
       body,
     }, 8000);
   } catch (e) {
@@ -483,6 +505,18 @@ module.exports = async (req, res) => {
     const whaleThreshold = totalNow * (whalePct / 100);
     if (!Array.isArray(state.whaleTxs)) state.whaleTxs = [];
     let whaleFound = 0;
+    const incomingAlerts = [];
+    // Private watchlist from config -> lowercase map {addr: label}
+    const watchMap = {};
+    if (Array.isArray(config.watchedAddresses)) {
+      for (const w of config.watchedAddresses) {
+        if (w && typeof w.addr === "string" && /^0x[0-9a-fA-F]{40}$/.test(w.addr)) {
+          watchMap[w.addr.toLowerCase()] =
+            (typeof w.label === "string" && w.label.trim()) ||
+            w.addr.slice(0, 10) + "…";
+        }
+      }
+    }
     try {
       const head = await rpcBlockNumber();
       const prevCursor =
@@ -493,13 +527,17 @@ module.exports = async (req, res) => {
         // First run: set the cursor, scan starts next cycle.
         state.whaleScan = { lastBlock: head, at: now, percent: whalePct, threshold: whaleThreshold };
       } else if (head > prevCursor) {
-        const scan = await scanWhaleTxs(prevCursor, head, whaleThreshold);
+        const scan = await scanWhaleTxs(prevCursor, head, whaleThreshold, watchMap);
         for (const tx of scan.found) {
           tx.fromTag = tagAddress(tx.from);
           tx.toTag = tagAddress(tx.to);
         }
         whaleFound = scan.found.length;
         state.whaleTxs = [...scan.found.reverse(), ...state.whaleTxs].slice(0, WHALE_KEEP);
+
+        // Watched-address hits go to push/email ONLY — never into public state.
+        for (const tx of scan.incoming || []) incomingAlerts.push(tx);
+
         state.whaleScan = {
           lastBlock: scan.lastBlock,
           at: now,
@@ -602,6 +640,17 @@ module.exports = async (req, res) => {
           `while price ${priceDir} ${Math.abs(c.pricePct).toFixed(2)}%\n` +
           `$${c.fromPrice} → $${c.toPrice}`,
         "zap"
+      );
+    }
+
+    for (const tx of incomingAlerts) {
+      await sendPush(
+        `Incoming: ${tx.label}`,
+        `Received ${Math.round(tx.quai).toLocaleString("en-US")} QUAI\n` +
+          `from ${tx.from.slice(0, 10)}…${tx.from.slice(-6)}\n` +
+          `${EXPLORER}/tx/${tx.hash}`,
+        "inbox_tray,bell",
+        true
       );
     }
 

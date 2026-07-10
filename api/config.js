@@ -58,7 +58,7 @@ module.exports = async (req, res) => {
   if (req.method === "GET") {
     const config = (await redisGet(CONFIG_KEY)) || {};
     res.setHeader("Cache-Control", "no-store");
-    return res.status(200).json({
+    const out = {
       thresholdPercent:
         Number(config.thresholdPercent) > 0
           ? Number(config.thresholdPercent)
@@ -67,7 +67,15 @@ module.exports = async (req, res) => {
         Number(config.whaleTxPercent) > 0
           ? Number(config.whaleTxPercent)
           : 0.5,
-    });
+    };
+    // The private watchlist is only returned when the secret is supplied.
+    const qsSecret = (req.query && req.query.secret) || "";
+    if (process.env.CRON_SECRET && qsSecret === process.env.CRON_SECRET) {
+      out.watchedAddresses = Array.isArray(config.watchedAddresses)
+        ? config.watchedAddresses
+        : [];
+    }
+    return res.status(200).json(out);
   }
 
   if (req.method === "POST") {
@@ -96,6 +104,26 @@ module.exports = async (req, res) => {
           .json({ error: "whaleTxPercent must be between 0 and 10" });
       }
       next.whaleTxPercent = wp;
+    }
+    if (body.watchedAddresses !== undefined) {
+      if (!Array.isArray(body.watchedAddresses) || body.watchedAddresses.length > 20) {
+        return res
+          .status(400)
+          .json({ error: "watchedAddresses must be an array of at most 20 entries" });
+      }
+      const cleaned = [];
+      for (const w of body.watchedAddresses) {
+        const addr = w && typeof w.addr === "string" ? w.addr.trim() : "";
+        if (!/^0x[0-9a-fA-F]{40}$/.test(addr)) {
+          return res
+            .status(400)
+            .json({ error: `invalid address: "${addr.slice(0, 50)}" — must be 0x + 40 hex chars` });
+        }
+        const label =
+          w && typeof w.label === "string" ? w.label.trim().slice(0, 40) : "";
+        cleaned.push({ addr, label });
+      }
+      next.watchedAddresses = cleaned;
     }
     await redisSet(CONFIG_KEY, next);
     return res.status(200).json({

@@ -40,6 +40,16 @@
     font-size: .9rem; padding: .55rem .7rem;
   }
   input:focus { outline: 2px solid var(--crimson); outline-offset: 1px; }
+  textarea {
+    width: 100%; background: var(--ink); border: 1px solid var(--line);
+    border-radius: 6px; color: var(--text); font-family: var(--mono);
+    font-size: .78rem; padding: .55rem .7rem; resize: vertical;
+  }
+  textarea:focus { outline: 2px solid var(--crimson); outline-offset: 1px; }
+  .btnrow { display: flex; gap: .7rem; margin-top: 1.4rem; }
+  .btnrow button { margin-top: 0; flex: 1; }
+  button.secondary { background: var(--panel); border: 1px solid var(--line); color: var(--text); }
+  button.secondary:hover { border-color: var(--muted); }
   button {
     margin-top: 1.4rem; width: 100%; background: var(--crimson); border: none;
     border-radius: 6px; color: #fff; font-family: var(--sans); font-weight: 500;
@@ -69,10 +79,16 @@
     <label for="whale">Whale feed: log transfers ≥ (% of combined watched balance)</label>
     <input id="whale" type="number" min="0.01" max="10" step="0.01">
 
+    <label for="watchlist">Watched addresses (private) — any incoming tx alerts your phone/email. One per line: address, then optional label</label>
+    <textarea id="watchlist" rows="5" spellcheck="false" placeholder="0x0050AF0000000000000000000000000000000000 my cold wallet"></textarea>
+
     <label for="secret">Secret</label>
     <input id="secret" type="password" placeholder="CRON_SECRET" autocomplete="off">
 
-    <button id="save">Save threshold</button>
+    <div class="btnrow">
+      <button id="load" class="secondary" type="button">Load current settings</button>
+      <button id="save" type="button">Save all settings</button>
+    </div>
     <div id="msg"></div>
   </div>
 
@@ -80,7 +96,7 @@
 </div>
 
 <script>
-// Prefill current threshold
+// Prefill public thresholds immediately; the private watchlist needs the secret.
 fetch("/api/config")
   .then(r => r.json())
   .then(j => {
@@ -88,6 +104,53 @@ fetch("/api/config")
     if (j.whaleTxPercent) document.getElementById("whale").value = j.whaleTxPercent;
   })
   .catch(() => {});
+
+document.getElementById("load").addEventListener("click", async () => {
+  const msg = document.getElementById("msg");
+  const secret = document.getElementById("secret").value;
+  msg.className = "";
+  if (!secret) {
+    msg.textContent = "Enter the secret to load the watchlist.";
+    msg.className = "err";
+    return;
+  }
+  try {
+    const r = await fetch("/api/config?secret=" + encodeURIComponent(secret));
+    const j = await r.json();
+    if (j.thresholdPercent) document.getElementById("pct").value = j.thresholdPercent;
+    if (j.whaleTxPercent) document.getElementById("whale").value = j.whaleTxPercent;
+    if (Array.isArray(j.watchedAddresses)) {
+      document.getElementById("watchlist").value = j.watchedAddresses
+        .map(w => w.addr + (w.label ? " " + w.label : ""))
+        .join("\n");
+      msg.textContent = `Loaded ${j.watchedAddresses.length} watched address(es).`;
+      msg.className = "ok";
+    } else {
+      msg.textContent = "Wrong secret — watchlist not returned.";
+      msg.className = "err";
+    }
+  } catch (e) {
+    msg.textContent = "Load failed — network error.";
+    msg.className = "err";
+  }
+});
+
+function parseWatchlist() {
+  const lines = document.getElementById("watchlist").value
+    .split("\n").map(l => l.trim()).filter(Boolean);
+  const out = [];
+  for (const line of lines) {
+    const sp = line.indexOf(" ");
+    const addr = sp === -1 ? line : line.slice(0, sp);
+    const label = sp === -1 ? "" : line.slice(sp + 1).trim();
+    if (!/^0x[0-9a-fA-F]{40}$/.test(addr)) {
+      return { error: `Invalid address: "${addr.slice(0, 30)}…" — must be 0x + 40 hex characters.` };
+    }
+    out.push({ addr, label });
+  }
+  if (out.length > 20) return { error: "Maximum 20 watched addresses." };
+  return { list: out };
+}
 
 document.getElementById("save").addEventListener("click", async () => {
   const msg = document.getElementById("msg");
@@ -106,6 +169,12 @@ document.getElementById("save").addEventListener("click", async () => {
     msg.className = "err";
     return;
   }
+  const wl = parseWatchlist();
+  if (wl.error) {
+    msg.textContent = wl.error;
+    msg.className = "err";
+    return;
+  }
   if (!secret) {
     msg.textContent = "Enter the secret to save.";
     msg.className = "err";
@@ -117,7 +186,7 @@ document.getElementById("save").addEventListener("click", async () => {
     const r = await fetch("/api/config", {
       method: "POST",
       headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ thresholdPercent: pct, whaleTxPercent: whale, secret }),
+      body: JSON.stringify({ thresholdPercent: pct, whaleTxPercent: whale, watchedAddresses: wl.list, secret }),
     });
     const j = await r.json();
     if (r.ok) {
