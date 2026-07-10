@@ -302,6 +302,19 @@
     <div class="chart-note" id="chart-note"></div>
   </section>
 
+  <section class="chart-section">
+    <h2 class="grid-title" style="margin-bottom:.6rem">Total held on exchanges
+      <small>combined QUAI across all monitored wallets (left) vs price (right) — falling = coins leaving exchanges</small>
+    </h2>
+    <div class="range-row">
+      <button class="range-btn trend-range" data-range="1">24h</button>
+      <button class="range-btn trend-range active" data-range="7">7d</button>
+      <button class="range-btn trend-range" data-range="30">30d</button>
+    </div>
+    <div class="chart-wrap"><canvas id="trendchart"></canvas></div>
+    <div class="chart-note" id="trend-note"></div>
+  </section>
+
   <section class="alerts">
     <h2 id="alerts-heading">Alerts</h2>
     <div id="alert-list"><div class="empty">No alerts yet.</div></div>
@@ -326,7 +339,7 @@
     Balances sampled every 5 min via Quai RPC ·
     <b class="in">▲ inflow</b> to exchange ·
     <b class="out">▼ outflow</b> from exchange
-    <span class="ver">v13-donate</span>
+    <span class="ver">v14-trend-corr</span>
   </footer>
 </div>
 
@@ -433,7 +446,22 @@ async function refresh() {
     // alerts
     const list = document.getElementById("alert-list");
     if (s.alerts && s.alerts.length) {
-      list.innerHTML = s.alerts.map(a => `
+      list.innerHTML = s.alerts.map(a => {
+        if (a.type === "correlation") {
+          const flowDir = a.flow1h < 0 ? "outflow" : "inflow";
+          const priceDir = a.pricePct > 0 ? "up" : "down";
+          const cls = a.kind === "BULLISH" ? "down" : "up";
+          return `
+        <div class="alert-row">
+          <time>${new Date(a.time).toLocaleString()}</time>
+          <span>⚡ divergence</span>
+          <span class="amt ${cls}">
+            ${fmt(Math.abs(a.flow1h))} QUAI ${flowDir} · price ${priceDir} ${Math.abs(a.pricePct).toFixed(2)}%
+          </span>
+          <span style="color:var(--muted)">1h · $${a.fromPrice} → $${a.toPrice}</span>
+        </div>`;
+        }
+        return `
         <div class="alert-row">
           <time>${new Date(a.time).toLocaleString()}</time>
           <span>${a.exchange}</span>
@@ -443,7 +471,8 @@ async function refresh() {
           <span style="color:var(--muted)">
             ${(a.delta > 0 ? "+" : "−")}${fmt(Math.abs(a.delta))} QUAI · ${fmt(a.from)} → ${fmt(a.to)}
           </span>
-        </div>`).join("");
+        </div>`;
+      }).join("");
     }
   } catch (e) {
     // Keep whatever is already rendered; just say the live feed is unreachable.
@@ -468,6 +497,7 @@ async function loadChart() {
     const r = await fetch("/api/history");
     chartData = await r.json();
     renderChart();
+    renderTrend();
   } catch (e) {
     document.getElementById("chart-note").textContent = chart
       ? "chart refresh failed — showing last loaded data"
@@ -630,12 +660,135 @@ function renderChart() {
   chart = new Chart(document.getElementById("flowchart"), cfg);
 }
 
-document.querySelectorAll(".range-btn").forEach(btn => {
+document.querySelectorAll(".range-btn:not(.trend-range)").forEach(btn => {
   btn.addEventListener("click", () => {
-    document.querySelectorAll(".range-btn").forEach(b => b.classList.remove("active"));
+    document.querySelectorAll(".range-btn:not(.trend-range)").forEach(b => b.classList.remove("active"));
     btn.classList.add("active");
     rangeDays = Number(btn.dataset.range);
     renderChart();
+  });
+});
+
+// --- net exchange balance trend chart ------------------------------------
+let trendChart = null;
+let trendDays = 7;
+
+function renderTrend() {
+  if (!chartData || typeof Chart === "undefined") return;
+  const note = document.getElementById("trend-note");
+  const nowMs = Date.now();
+  const cutoff = nowMs - trendDays * 24 * 3600 * 1000;
+  const addrs = Object.keys({
+    "0x006243e4eE6C2CF6F993036f27f0A88f265Ddb4a": 1,
+    "0x007e2F1a4709B812F339f22E18032118FBcc8987": 1,
+    "0x004cd3a9997a5170A9234CEddD1ec5DCE7Db23c3": 1,
+  });
+
+  const samples = (chartData.history || [])
+    .map(s => ({ t: new Date(s.t).getTime(), b: s.b }))
+    .filter(s => s.t >= cutoff)
+    .sort((a, b) => a.t - b.t);
+
+  // Total only when every wallet is present in the sample (avoids fake dips)
+  const totalSeries = samples
+    .filter(s => addrs.every(a => s.b[a] !== undefined))
+    .map(s => ({ x: s.t, y: addrs.reduce((sum, a) => sum + s.b[a], 0) }));
+
+  const price = (chartData.price || []).filter(p => p[0] >= cutoff)
+    .map(p => ({ x: p[0], y: p[1] }));
+
+  note.textContent = totalSeries.length < 2
+    ? "collecting history — the trend line fills in as samples accumulate"
+    : "a falling line means coins are leaving exchanges (often read as bullish)";
+
+  const fmtTick = (ms) => {
+    const d = new Date(ms);
+    return trendDays === 1
+      ? d.toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" })
+      : d.toLocaleDateString([], { month: "short", day: "numeric" });
+  };
+
+  const cfg = {
+    type: "line",
+    data: {
+      datasets: [
+        {
+          label: "total on exchanges (QUAI)",
+          data: totalSeries,
+          borderColor: "#6aa2ff",
+          backgroundColor: "rgba(106,162,255,.08)",
+          borderWidth: 2,
+          pointRadius: 0,
+          fill: true,
+          yAxisID: "yTotal",
+          tension: 0.2,
+        },
+        {
+          label: "QUAI/USD",
+          data: price,
+          borderColor: PRICE_COLOR,
+          backgroundColor: "transparent",
+          borderWidth: 1.5,
+          pointRadius: 0,
+          spanGaps: true,
+          yAxisID: "yPrice",
+          tension: 0.2,
+        },
+      ],
+    },
+    options: {
+      responsive: true,
+      maintainAspectRatio: false,
+      animation: false,
+      interaction: { mode: "index", intersect: false },
+      scales: {
+        x: {
+          type: "linear",
+          min: cutoff,
+          max: nowMs,
+          ticks: { color: "#8b949e", maxTicksLimit: 8, callback: (v) => fmtTick(v),
+                   font: { family: "IBM Plex Mono", size: 10 } },
+          grid: { color: "#262c33" },
+        },
+        yTotal: {
+          position: "left",
+          title: { display: true, text: "total on exchanges (QUAI)", color: "#6aa2ff",
+                   font: { family: "IBM Plex Mono", size: 10 } },
+          ticks: { color: "#6aa2ff", font: { family: "IBM Plex Mono", size: 10 },
+                   callback: (v) => Math.abs(v) >= 1e6 ? (v/1e6).toFixed(1) + "M"
+                                  : Math.abs(v) >= 1e3 ? (v/1e3).toFixed(0) + "K" : v },
+          grid: { color: "#262c33" },
+        },
+        yPrice: {
+          position: "right",
+          title: { display: true, text: "QUAI/USD", color: PRICE_COLOR,
+                   font: { family: "IBM Plex Mono", size: 10 } },
+          ticks: { color: PRICE_COLOR, font: { family: "IBM Plex Mono", size: 10 } },
+          grid: { drawOnChartArea: false },
+        },
+      },
+      plugins: {
+        legend: { labels: { color: "#e8eaed", boxWidth: 14,
+                            font: { family: "Space Grotesk", size: 11 } } },
+        tooltip: {
+          callbacks: {
+            title: (items) => items.length ? new Date(items[0].parsed.x).toLocaleString() : "",
+          },
+        },
+      },
+    },
+  };
+
+  if (trendChart) trendChart.destroy();
+  trendChart = new Chart(document.getElementById("trendchart"), cfg);
+}
+
+document.querySelectorAll(".trend-range").forEach(btn => {
+  btn.addEventListener("click", () => {
+    document.querySelectorAll(".trend-range").forEach(b => b.classList.remove("active"));
+    btn.classList.add("active");
+    trendDays = Number(btn.dataset.range);
+    renderTrend();
   });
 });
 

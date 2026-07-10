@@ -45,7 +45,7 @@ module.exports = async (req, res) => {
   res.setHeader("Cache-Control", "no-store");
   const state = j.result ? JSON.parse(j.result) : { exchanges: {}, alerts: [] };
   delete state.history; // internal working data, not needed by the page
-  state.appVersion = "v13-donate";
+  state.appVersion = "v14-trend-corr";
   return res.status(200).json(state);
   } catch (e) {
     console.error(e);

@@ -31,6 +31,14 @@ const MONTH_MS = 30 * 24 * 3600 * 1000;
 const MONTH_MIN_MS = 26 * 24 * 3600 * 1000;
 const REARM_FRACTION = 0.8; // hysteresis: re-arm below 80% of threshold
 
+// Price-move correlation flag: fire when a large aggregate net flow in the
+// last hour coincides with a price move of the opposite sign.
+// "Bullish divergence" = coins leaving exchanges (outflow) while price rises.
+// "Bearish divergence" = coins arriving (inflow) while price falls.
+const CORR_FLOW_QUAI = 500000;   // min |aggregate 1h net flow| to consider
+const CORR_PRICE_PCT = 1.0;      // min |1h price move %| to consider
+const CORR_COOLDOWN_MS = 3 * 3600 * 1000; // don't re-fire within 3h
+
 // --- Upstash Redis (REST) ---------------------------------------------
 const REDIS_URL =
   process.env.UPSTASH_REDIS_REST_URL || process.env.KV_REST_API_URL;
@@ -280,6 +288,7 @@ module.exports = async (req, res) => {
     state.history = kept;
 
     const fired = [];
+    let corrFired = null;
 
     for (const [addr, bal] of Object.entries(balances)) {
       const name = WATCHED[addr];
@@ -344,7 +353,64 @@ module.exports = async (req, res) => {
       };
     }
 
-    state.alerts = state.alerts.slice(0, 20);
+    // --- Aggregate total across all watched wallets (for trend chart) -----
+    const totalNow = Object.values(balances).reduce((s, v) => s + v, 0);
+    state.totalExchange = { quai: totalNow, at: now };
+
+    // --- Price-move correlation flag --------------------------------------
+    // Compare the last ~1h: aggregate net flow vs price move. A large flow
+    // opposite in sign to the price move is the actionable divergence.
+    try {
+      const hourAgo = nowMs - 60 * 60 * 1000;
+      const past = state.history
+        .filter((s) => new Date(s.t).getTime() <= hourAgo + 20 * 60 * 1000)
+        .sort(
+          (a, b) =>
+            Math.abs(new Date(a.t).getTime() - hourAgo) -
+            Math.abs(new Date(b.t).getTime() - hourAgo)
+        )[0];
+
+      if (past && price !== null) {
+        const pastTotal = Object.keys(WATCHED).reduce(
+          (s, a) => s + (past.b[a] !== undefined ? past.b[a] : 0),
+          0
+        );
+        const flow1h = totalNow - pastTotal; // + = net onto exchanges
+        const pastPrice = past.p;
+        const cooldownOk =
+          !state.lastCorrAt ||
+          nowMs - new Date(state.lastCorrAt).getTime() > CORR_COOLDOWN_MS;
+
+        if (
+          pastPrice &&
+          cooldownOk &&
+          Math.abs(flow1h) >= CORR_FLOW_QUAI
+        ) {
+          const pricePct = ((price - pastPrice) / pastPrice) * 100;
+          if (Math.abs(pricePct) >= CORR_PRICE_PCT) {
+            const outflowUp = flow1h < 0 && pricePct > 0; // coins leaving + price up
+            const inflowDown = flow1h > 0 && pricePct < 0; // coins arriving + price down
+            if (outflowUp || inflowDown) {
+              const kind = outflowUp ? "BULLISH" : "BEARISH";
+              const corr = {
+                time: now,
+                type: "correlation",
+                kind,
+                flow1h,
+                pricePct,
+                fromPrice: pastPrice,
+                toPrice: price,
+              };
+              state.alerts.unshift(corr);
+              state.lastCorrAt = now;
+              corrFired = corr;
+            }
+          }
+        }
+      }
+    } catch (e) {
+      console.error("correlation check failed:", e);
+    }
     state.lastCheck = now;
     state.thresholdPercent = thresholdPct;
     await redisSet(STATE_KEY, state);
@@ -355,6 +421,22 @@ module.exports = async (req, res) => {
         `${a.delta > 0 ? "+" : "−"}${Math.round(Math.abs(a.delta)).toLocaleString("en-US")} QUAI over ${a.window}\n` +
           `${a.from.toLocaleString("en-US")} → ${a.to.toLocaleString("en-US")}\n` +
           `${EXPLORER}/address/${a.address}`
+      );
+    }
+
+    if (corrFired) {
+      const c = corrFired;
+      const flowDir = c.flow1h < 0 ? "outflow" : "inflow";
+      const priceDir = c.pricePct > 0 ? "up" : "down";
+      const headline =
+        c.kind === "BULLISH"
+          ? "Divergence: outflow + price up"
+          : "Divergence: inflow + price down";
+      await sendPush(
+        `⚡ ${headline}`,
+        `Last hour: ${Math.round(Math.abs(c.flow1h)).toLocaleString("en-US")} QUAI ${flowDir} ` +
+          `while price ${priceDir} ${Math.abs(c.pricePct).toFixed(2)}%\n` +
+          `$${c.fromPrice} → $${c.toPrice}`
       );
     }
 
