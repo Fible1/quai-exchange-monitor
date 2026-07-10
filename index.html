@@ -1,0 +1,414 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>QUAI Exchange Flow Monitor</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Space+Grotesk:wght@400;500;700&family=IBM+Plex+Mono:wght@400;500;600&display=swap" rel="stylesheet">
+<style>
+  :root {
+    --ink: #0b0e11;
+    --panel: #14181d;
+    --line: #262c33;
+    --text: #e8eaed;
+    --muted: #8b949e;
+    --crimson: #e4342b;   /* inflow to exchange = potential sell pressure */
+    --jade: #3fb68b;      /* outflow from exchange = accumulation */
+    --mono: "IBM Plex Mono", monospace;
+    --sans: "Space Grotesk", sans-serif;
+  }
+  * { margin: 0; padding: 0; box-sizing: border-box; }
+  body {
+    background: var(--ink);
+    color: var(--text);
+    font-family: var(--sans);
+    min-height: 100vh;
+    padding: 2rem 1.25rem 4rem;
+  }
+  .wrap { max-width: 960px; margin: 0 auto; }
+
+  header {
+    display: flex;
+    align-items: baseline;
+    justify-content: space-between;
+    flex-wrap: wrap;
+    gap: .5rem 1rem;
+    border-bottom: 1px solid var(--line);
+    padding-bottom: 1.25rem;
+    margin-bottom: 2rem;
+  }
+  h1 { font-size: 1.15rem; font-weight: 700; letter-spacing: .02em; }
+  h1 span { color: var(--crimson); }
+  .status-line {
+    font-family: var(--mono);
+    font-size: .75rem;
+    color: var(--muted);
+    display: flex;
+    align-items: center;
+    gap: .5rem;
+  }
+  .dot {
+    width: 8px; height: 8px; border-radius: 50%;
+    background: var(--jade);
+    animation: pulse 2.5s ease-in-out infinite;
+  }
+  .dot.stale { background: var(--crimson); animation: none; }
+  @keyframes pulse { 50% { opacity: .35; } }
+  @media (prefers-reduced-motion: reduce) { .dot { animation: none; } }
+
+  .grid-title {
+    font-family: var(--mono);
+    font-size: .8rem;
+    text-transform: uppercase;
+    letter-spacing: .14em;
+    color: var(--text);
+    margin-bottom: 1rem;
+  }
+  .grid-title small {
+    display: block;
+    margin-top: .3rem;
+    color: var(--muted);
+    font-size: .68rem;
+    text-transform: none;
+    letter-spacing: 0;
+  }
+  .grid {
+    display: grid;
+    grid-template-columns: repeat(auto-fit, minmax(260px, 1fr));
+    gap: 1rem;
+    margin-bottom: 2.5rem;
+  }
+  .card {
+    background: var(--panel);
+    border: 1px solid var(--line);
+    border-radius: 10px;
+    padding: 1.4rem 1.4rem 1.2rem;
+  }
+  .eyebrow {
+    font-family: var(--mono);
+    font-size: .7rem;
+    text-transform: uppercase;
+    letter-spacing: .14em;
+    color: var(--muted);
+    margin-bottom: 1rem;
+  }
+  .delta {
+    font-family: var(--mono);
+    font-size: 1.9rem;
+    font-weight: 600;
+    font-variant-numeric: tabular-nums;
+    line-height: 1.1;
+    margin-bottom: .35rem;
+  }
+  .delta.up   { color: var(--crimson); }
+  .delta.down { color: var(--jade); }
+  .delta.flat { color: var(--muted); }
+  .delta-label {
+    font-family: var(--mono);
+    font-size: .72rem;
+    font-variant-numeric: tabular-nums;
+    color: var(--muted);
+    margin-bottom: 1.1rem;
+  }
+  .balance {
+    font-family: var(--mono);
+    font-size: .95rem;
+    font-variant-numeric: tabular-nums;
+    color: var(--text);
+  }
+  .balance small { color: var(--muted); font-size: .72rem; display: block; margin-top: .15rem; }
+  .periods {
+    margin-top: 1rem;
+    padding-top: .8rem;
+    border-top: 1px solid var(--line);
+    display: grid;
+    grid-template-columns: 4ch 1fr auto;
+    gap: .3rem .8rem;
+    font-family: var(--mono);
+    font-size: .76rem;
+    font-variant-numeric: tabular-nums;
+    align-items: baseline;
+  }
+  .periods .p-label { color: var(--muted); }
+  .periods .p-pct { font-weight: 600; }
+  .periods .p-pct.up { color: var(--crimson); }
+  .periods .p-pct.down { color: var(--jade); }
+  .periods .p-pct.flat, .periods .p-abs { color: var(--muted); }
+  .addr {
+    display: inline-block;
+    margin-top: .9rem;
+    font-family: var(--mono);
+    font-size: .7rem;
+    color: var(--muted);
+    text-decoration: none;
+    border-bottom: 1px dotted var(--line);
+  }
+  .addr:hover { color: var(--text); }
+
+  h2 {
+    font-size: .8rem;
+    font-family: var(--mono);
+    text-transform: uppercase;
+    letter-spacing: .14em;
+    color: var(--muted);
+    margin-bottom: 1rem;
+  }
+  .alerts { border-top: 1px solid var(--line); padding-top: 1.5rem; }
+  .alert-row {
+    display: flex;
+    flex-wrap: wrap;
+    gap: .4rem 1rem;
+    align-items: baseline;
+    font-family: var(--mono);
+    font-size: .8rem;
+    padding: .6rem 0;
+    border-bottom: 1px solid var(--line);
+  }
+  .alert-row time { color: var(--muted); font-size: .72rem; min-width: 11ch; }
+  .alert-row .amt { font-weight: 600; font-variant-numeric: tabular-nums; }
+  .amt.up { color: var(--crimson); }
+  .amt.down { color: var(--jade); }
+  .empty { color: var(--muted); font-family: var(--mono); font-size: .8rem; padding: 1rem 0; }
+
+  .settings {
+    border-top: 1px solid var(--line);
+    margin-top: 2.5rem;
+    padding-top: 1.5rem;
+  }
+  .settings-row {
+    display: flex;
+    flex-wrap: wrap;
+    align-items: center;
+    gap: .75rem;
+    font-family: var(--mono);
+    font-size: .8rem;
+  }
+  .settings input {
+    background: var(--panel);
+    border: 1px solid var(--line);
+    border-radius: 6px;
+    color: var(--text);
+    font-family: var(--mono);
+    font-size: .8rem;
+    padding: .45rem .6rem;
+  }
+  .settings input:focus { outline: 2px solid var(--crimson); outline-offset: 1px; }
+  #pct-input { width: 5.5rem; }
+  #secret-input { width: 14rem; }
+  .settings button {
+    background: var(--crimson);
+    border: none;
+    border-radius: 6px;
+    color: #fff;
+    font-family: var(--sans);
+    font-weight: 500;
+    font-size: .8rem;
+    padding: .5rem 1rem;
+    cursor: pointer;
+  }
+  .settings button:hover { filter: brightness(1.1); }
+  .settings button:focus-visible { outline: 2px solid var(--text); outline-offset: 2px; }
+  #save-msg { color: var(--muted); font-size: .72rem; }
+  #save-msg.ok { color: var(--jade); }
+  #save-msg.err { color: var(--crimson); }
+
+  footer {
+    margin-top: 2.5rem;
+    font-family: var(--mono);
+    font-size: .7rem;
+    color: var(--muted);
+  }
+  footer b.in { color: var(--crimson); font-weight: 500; }
+  footer b.out { color: var(--jade); font-weight: 500; }
+</style>
+</head>
+<body>
+<div class="wrap">
+  <header>
+    <h1>QUAI <span>/</span> Exchange Flow Monitor</h1>
+    <div class="status-line">
+      <span class="dot" id="dot"></span>
+      <span id="last-check">loading…</span>
+    </div>
+  </header>
+
+  <h2 class="grid-title">Net flow · last 24 hours
+    <small>cumulative balance change per exchange over the past day</small>
+  </h2>
+  <div class="grid" id="cards"></div>
+
+  <section class="alerts">
+    <h2 id="alerts-heading">Alerts</h2>
+    <div id="alert-list"><div class="empty">No alerts yet.</div></div>
+  </section>
+
+  <section class="settings">
+    <h2>Alert threshold</h2>
+    <div class="settings-row">
+      <label for="pct-input">Alert when the 24h net change exceeds</label>
+      <input id="pct-input" type="number" min="0.01" max="100" step="0.01" value="1"> %
+      <label for="secret-input">Secret</label>
+      <input id="secret-input" type="password" placeholder="CRON_SECRET" autocomplete="off">
+      <button id="save-btn">Save threshold</button>
+      <span id="save-msg"></span>
+    </div>
+  </section>
+
+  <footer>
+    Balances sampled every 5 min via Quai RPC ·
+    <b class="in">▲ inflow</b> to exchange ·
+    <b class="out">▼ outflow</b> from exchange
+  </footer>
+</div>
+
+<script>
+const fmt = n => n.toLocaleString("en-US", { maximumFractionDigits: 0 });
+const fmtPct = n => (n > 0 ? "+" : n < 0 ? "−" : "±") + Math.abs(n).toFixed(2) + "%";
+let currentThreshold = null;
+
+function periodCells(pct, abs) {
+  if (pct === null || pct === undefined) {
+    return '<span class="p-pct flat">—</span><span class="p-abs">collecting history</span>';
+  }
+  const cls = deltaClass(pct);
+  const absTxt = (abs > 0 ? "+" : abs < 0 ? "−" : "±") + fmt(Math.abs(abs)) + " QUAI";
+  return `<span class="p-pct ${cls}">${fmtPct(pct)}</span><span class="p-abs">${absTxt}</span>`;
+}
+
+function deltaClass(d) {
+  if (Math.abs(d) < 0.005) return "flat";
+  return d > 0 ? "up" : "down";
+}
+
+async function refresh() {
+  try {
+    const r = await fetch("/api/status");
+    const s = await r.json();
+
+    // header
+    const lc = document.getElementById("last-check");
+    const dot = document.getElementById("dot");
+    if (s.lastCheck) {
+      const t = new Date(s.lastCheck);
+      const ageMin = (Date.now() - t.getTime()) / 60000;
+      lc.textContent = "last check " + t.toLocaleTimeString() + " (" + Math.round(ageMin) + "m ago)";
+      dot.classList.toggle("stale", ageMin > 12);
+    } else {
+      lc.textContent = "waiting for first check…";
+      dot.classList.add("stale");
+    }
+
+    // threshold heading + settings prefill (don't clobber while typing)
+    if (s.thresholdPercent) {
+      document.getElementById("alerts-heading").textContent =
+        "Alerts · 24h net change > " + s.thresholdPercent + "%";
+      const inp = document.getElementById("pct-input");
+      if (currentThreshold === null && document.activeElement !== inp) {
+        inp.value = s.thresholdPercent;
+        currentThreshold = s.thresholdPercent;
+      }
+    }
+
+    // cards
+    const cards = document.getElementById("cards");
+    cards.innerHTML = "";
+    const entries = Object.entries(s.exchanges || {});
+    if (!entries.length) {
+      cards.innerHTML = '<div class="empty">No data yet — the checker has not run.</div>';
+    }
+    for (const [addr, ex] of entries) {
+      const p = ex.dayPct;
+      const d = ex.dayDelta;
+      const hasDay = p !== null && p !== undefined;
+      const windowLabel = ex.dayPartial && ex.daySpanH
+        ? `LAST ${ex.daySpanH} HOURS (collecting toward 24h)`
+        : "LAST 24 HOURS";
+      const hero = hasDay ? fmtPct(p) : "—";
+      const heroCls = hasDay ? deltaClass(p) : "flat";
+      const sub = hasDay
+        ? `${(d > 0 ? "+" : d < 0 ? "−" : "±")}${fmt(Math.abs(d))} QUAI · ${windowLabel}`
+        : "collecting history";
+      cards.insertAdjacentHTML("beforeend", `
+        <div class="card">
+          <div class="eyebrow">${ex.name}</div>
+          <div class="delta ${heroCls}">${hero}</div>
+          <div class="delta-label">${sub}</div>
+          <div class="balance">${fmt(ex.balance)} <small>current balance (QUAI)</small></div>
+          <div class="periods">
+            <span class="p-label">7d</span>${periodCells(ex.weekPct, ex.weekDelta)}
+            <span class="p-label">30d</span>${periodCells(ex.monthPct, ex.monthDelta)}
+          </div>
+          <a class="addr" target="_blank" rel="noopener"
+             href="https://quaiscan.io/address/${addr}">${addr.slice(0,10)}…${addr.slice(-6)}</a>
+        </div>`);
+    }
+
+    // alerts
+    const list = document.getElementById("alert-list");
+    if (s.alerts && s.alerts.length) {
+      list.innerHTML = s.alerts.map(a => `
+        <div class="alert-row">
+          <time>${new Date(a.time).toLocaleString()}</time>
+          <span>${a.exchange}</span>
+          <span class="amt ${a.delta > 0 ? "up" : "down"}">
+            ${a.delta > 0 ? "▲" : "▼"} ${Math.abs(a.deltaPct ?? 0).toFixed(2)}% / ${a.window || "24h"}
+          </span>
+          <span style="color:var(--muted)">
+            ${(a.delta > 0 ? "+" : "−")}${fmt(Math.abs(a.delta))} QUAI · ${fmt(a.from)} → ${fmt(a.to)}
+          </span>
+        </div>`).join("");
+    }
+  } catch (e) {
+    document.getElementById("last-check").textContent = "status fetch failed";
+  }
+}
+
+// --- threshold editor ----------------------------------------------------
+document.getElementById("save-btn").addEventListener("click", async () => {
+  const msg = document.getElementById("save-msg");
+  const pct = parseFloat(document.getElementById("pct-input").value);
+  const secret = document.getElementById("secret-input").value;
+
+  msg.className = "";
+  if (!Number.isFinite(pct) || pct <= 0 || pct > 100) {
+    msg.textContent = "Enter a percent between 0.01 and 100.";
+    msg.className = "err";
+    return;
+  }
+  if (!secret) {
+    msg.textContent = "Enter the secret to save.";
+    msg.className = "err";
+    return;
+  }
+
+  msg.textContent = "Saving…";
+  try {
+    const r = await fetch("/api/config", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ thresholdPercent: pct, secret }),
+    });
+    const j = await r.json();
+    if (r.ok) {
+      msg.textContent = "Saved. New threshold applies from the next check.";
+      msg.className = "ok";
+      currentThreshold = pct;
+      document.getElementById("alerts-heading").textContent =
+        "Alerts · 24h net change > " + pct + "%";
+    } else {
+      msg.textContent = j.error === "wrong secret" ? "Wrong secret." : (j.error || "Save failed.");
+      msg.className = "err";
+    }
+  } catch (e) {
+    msg.textContent = "Save failed — network error.";
+    msg.className = "err";
+  }
+});
+
+refresh();
+setInterval(refresh, 60000);
+</script>
+</body>
+</html>
