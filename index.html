@@ -257,7 +257,7 @@
   </section>
 
   <footer>
-    Balances sampled every 5 min via Quai RPC ·
+    v8-adaptive-pct · Balances sampled every 5 min via Quai RPC ·
     <b class="in">▲ inflow</b> to exchange ·
     <b class="out">▼ outflow</b> from exchange
   </footer>
@@ -265,7 +265,12 @@
 
 <script>
 const fmt = n => n.toLocaleString("en-US", { maximumFractionDigits: 0 });
-const fmtPct = n => (n > 0 ? "+" : n < 0 ? "−" : "±") + Math.abs(n).toFixed(2) + "%";
+const fmtPct = n => {
+  const a = Math.abs(n);
+  // enough decimals to show ~2 significant digits, capped at 4
+  const dec = a === 0 ? 2 : a >= 1 ? 2 : a >= 0.1 ? 2 : a >= 0.01 ? 3 : 4;
+  return (n > 0 ? "+" : n < 0 ? "−" : "±") + a.toFixed(dec) + "%";
+};
 let currentThreshold = null;
 
 function periodCells(pct, abs) {
@@ -278,7 +283,7 @@ function periodCells(pct, abs) {
 }
 
 function deltaClass(d) {
-  if (Math.abs(d) < 0.005) return "flat";
+  if (Math.abs(d) < 0.0001) return "flat"; // only a genuinely unchanged balance is gray
   return d > 0 ? "up" : "down";
 }
 
