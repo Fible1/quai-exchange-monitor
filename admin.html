@@ -66,6 +66,9 @@
     <label for="pct">Alert when the 24h net change exceeds (%)</label>
     <input id="pct" type="number" min="0.01" max="100" step="0.01">
 
+    <label for="whale">Whale feed: log transfers ≥ (% of combined watched balance)</label>
+    <input id="whale" type="number" min="0.01" max="10" step="0.01">
+
     <label for="secret">Secret</label>
     <input id="secret" type="password" placeholder="CRON_SECRET" autocomplete="off">
 
@@ -80,17 +83,26 @@
 // Prefill current threshold
 fetch("/api/config")
   .then(r => r.json())
-  .then(j => { if (j.thresholdPercent) document.getElementById("pct").value = j.thresholdPercent; })
+  .then(j => {
+    if (j.thresholdPercent) document.getElementById("pct").value = j.thresholdPercent;
+    if (j.whaleTxPercent) document.getElementById("whale").value = j.whaleTxPercent;
+  })
   .catch(() => {});
 
 document.getElementById("save").addEventListener("click", async () => {
   const msg = document.getElementById("msg");
   const pct = parseFloat(document.getElementById("pct").value);
+  const whale = parseFloat(document.getElementById("whale").value);
   const secret = document.getElementById("secret").value;
 
   msg.className = "";
   if (!Number.isFinite(pct) || pct <= 0 || pct > 100) {
-    msg.textContent = "Enter a percent between 0.01 and 100.";
+    msg.textContent = "Alert threshold must be between 0.01 and 100.";
+    msg.className = "err";
+    return;
+  }
+  if (!Number.isFinite(whale) || whale <= 0 || whale > 10) {
+    msg.textContent = "Whale feed percent must be between 0.01 and 10.";
     msg.className = "err";
     return;
   }
@@ -105,11 +117,11 @@ document.getElementById("save").addEventListener("click", async () => {
     const r = await fetch("/api/config", {
       method: "POST",
       headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ thresholdPercent: pct, secret }),
+      body: JSON.stringify({ thresholdPercent: pct, whaleTxPercent: whale, secret }),
     });
     const j = await r.json();
     if (r.ok) {
-      msg.textContent = "Saved. Applies from the next check.";
+      msg.textContent = "Saved. Both settings apply from the next check.";
       msg.className = "ok";
     } else {
       msg.textContent = j.error === "wrong secret" ? "Wrong secret." : (j.error || "Save failed.");

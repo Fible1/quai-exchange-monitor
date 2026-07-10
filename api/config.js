@@ -63,6 +63,10 @@ module.exports = async (req, res) => {
         Number(config.thresholdPercent) > 0
           ? Number(config.thresholdPercent)
           : DEFAULT_THRESHOLD_PCT,
+      whaleTxPercent:
+        Number(config.whaleTxPercent) > 0
+          ? Number(config.whaleTxPercent)
+          : 0.5,
     });
   }
 
@@ -71,14 +75,34 @@ module.exports = async (req, res) => {
     if (!process.env.CRON_SECRET || body.secret !== process.env.CRON_SECRET) {
       return res.status(401).json({ error: "wrong secret" });
     }
-    const pct = Number(body.thresholdPercent);
-    if (!Number.isFinite(pct) || pct <= 0 || pct > 100) {
-      return res
-        .status(400)
-        .json({ error: "thresholdPercent must be between 0 and 100" });
+    // Partial updates: only the fields present in the body are changed.
+    const existing = (await redisGet(CONFIG_KEY)) || {};
+    const next = { ...existing, updated: new Date().toISOString() };
+
+    if (body.thresholdPercent !== undefined) {
+      const pct = Number(body.thresholdPercent);
+      if (!Number.isFinite(pct) || pct <= 0 || pct > 100) {
+        return res
+          .status(400)
+          .json({ error: "thresholdPercent must be between 0 and 100" });
+      }
+      next.thresholdPercent = pct;
     }
-    await redisSet(CONFIG_KEY, { thresholdPercent: pct, updated: new Date().toISOString() });
-    return res.status(200).json({ ok: true, thresholdPercent: pct });
+    if (body.whaleTxPercent !== undefined) {
+      const wp = Number(body.whaleTxPercent);
+      if (!Number.isFinite(wp) || wp <= 0 || wp > 10) {
+        return res
+          .status(400)
+          .json({ error: "whaleTxPercent must be between 0 and 10" });
+      }
+      next.whaleTxPercent = wp;
+    }
+    await redisSet(CONFIG_KEY, next);
+    return res.status(200).json({
+      ok: true,
+      thresholdPercent: next.thresholdPercent,
+      whaleTxPercent: next.whaleTxPercent,
+    });
   }
 
   return res.status(405).json({ error: "method not allowed" });

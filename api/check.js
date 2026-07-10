@@ -39,6 +39,14 @@ const CORR_FLOW_QUAI = 500000;   // min |aggregate 1h net flow| to consider
 const CORR_PRICE_PCT = 1.0;      // min |1h price move %| to consider
 const CORR_COOLDOWN_MS = 3 * 3600 * 1000; // don't re-fire within 3h
 
+// Whale transaction feed: scan every tx in new blocks; keep transfers whose
+// value is at least whaleTxPercent (default 0.5%) of the combined watched
+// balance. Cursor + caps keep each run bounded.
+const WHALE_DEFAULT_PCT = 0.5;
+const WHALE_KEEP = 50;              // feed length
+const MAX_BLOCKS_PER_RUN = 120;     // cap per 5-min cycle
+const RPC_BATCH_SIZE = 25;          // blocks per batched RPC call
+
 // --- Upstash Redis (REST) ---------------------------------------------
 const REDIS_URL =
   process.env.UPSTASH_REDIS_REST_URL || process.env.KV_REST_API_URL;
@@ -206,6 +214,108 @@ function periodReference(history, addr, nowMs, periodMs, minMs) {
   return { bal: best.b[addr] };
 }
 
+// --- Whale transaction scanning ------------------------------------------
+async function rpcRaw(body) {
+  const r = await fetchWithTimeout(RPC_URL, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify(body),
+  }, 15000);
+  const text = await r.text();
+  try {
+    return JSON.parse(text);
+  } catch (_) {
+    throw new Error(`Non-JSON from RPC — HTTP ${r.status}, body starts: ${text.slice(0, 120)}`);
+  }
+}
+
+async function rpcBlockNumber() {
+  const j = await rpcRaw({ jsonrpc: "2.0", method: "quai_blockNumber", params: [], id: 1 });
+  if (typeof j.result !== "string") throw new Error(`quai_blockNumber failed: ${JSON.stringify(j).slice(0, 120)}`);
+  return parseInt(j.result, 16);
+}
+
+// go-quai block shapes vary across versions; read defensively.
+function blockTxs(block) {
+  if (!block) return [];
+  return (
+    block.transactions ||
+    (block.woBody && block.woBody.transactions) ||
+    (block.body && block.body.transactions) ||
+    []
+  );
+}
+function blockTimestamp(block) {
+  const hex =
+    (block && block.timestamp) ||
+    (block && block.woHeader && block.woHeader.timestamp) ||
+    (block && block.header && block.header.timestamp);
+  return hex ? new Date(parseInt(hex, 16) * 1000).toISOString() : null;
+}
+
+// Scan blocks (cursor..head] for transfers >= thresholdQuai. Returns
+// { found, lastBlock, scanned, skipped } — cursor only advances on success.
+async function scanWhaleTxs(prevCursor, head, thresholdQuai) {
+  let from = prevCursor + 1;
+  let skipped = 0;
+  if (head - from + 1 > MAX_BLOCKS_PER_RUN) {
+    skipped = head - from + 1 - MAX_BLOCKS_PER_RUN;
+    from = head - MAX_BLOCKS_PER_RUN + 1;
+  }
+  const found = [];
+  let scanned = 0;
+
+  for (let start = from; start <= head; start += RPC_BATCH_SIZE) {
+    const end = Math.min(start + RPC_BATCH_SIZE - 1, head);
+    const batch = [];
+    for (let n = start; n <= end; n++) {
+      batch.push({
+        jsonrpc: "2.0",
+        method: "quai_getBlockByNumber",
+        params: ["0x" + n.toString(16), true],
+        id: n,
+      });
+    }
+    const results = await rpcRaw(batch);
+    if (!Array.isArray(results)) {
+      throw new Error(`RPC batch not supported or failed: ${JSON.stringify(results).slice(0, 120)}`);
+    }
+    for (const item of results) {
+      const block = item && item.result;
+      if (!block) continue;
+      scanned++;
+      const ts = blockTimestamp(block);
+      for (const tx of blockTxs(block)) {
+        if (!tx || typeof tx.value !== "string") continue;
+        let quai;
+        try {
+          quai = weiToQuai(BigInt(tx.value).toString());
+        } catch (_) {
+          continue;
+        }
+        if (quai >= thresholdQuai) {
+          found.push({
+            t: ts || new Date().toISOString(),
+            block: item.id,
+            hash: tx.hash,
+            from: (tx.from || "").toLowerCase(),
+            to: (tx.to || "").toLowerCase(),
+            quai,
+          });
+        }
+      }
+    }
+  }
+  return { found, lastBlock: head, scanned, skipped };
+}
+
+function tagAddress(addr) {
+  for (const [a, name] of Object.entries(WATCHED)) {
+    if (a.toLowerCase() === addr) return name;
+  }
+  return null;
+}
+
 // --- Push via ntfy.sh ---------------------------------------------------
 async function sendPush(title, body) {
   const topic = process.env.NTFY_TOPIC;
@@ -357,6 +467,52 @@ module.exports = async (req, res) => {
     const totalNow = Object.values(balances).reduce((s, v) => s + v, 0);
     state.totalExchange = { quai: totalNow, at: now };
 
+    // --- Whale transaction feed --------------------------------------------
+    const whalePct =
+      Number(config.whaleTxPercent) > 0 && Number(config.whaleTxPercent) <= 10
+        ? Number(config.whaleTxPercent)
+        : WHALE_DEFAULT_PCT;
+    const whaleThreshold = totalNow * (whalePct / 100);
+    if (!Array.isArray(state.whaleTxs)) state.whaleTxs = [];
+    let whaleFound = 0;
+    try {
+      const head = await rpcBlockNumber();
+      const prevCursor =
+        state.whaleScan && Number.isInteger(state.whaleScan.lastBlock)
+          ? state.whaleScan.lastBlock
+          : null;
+      if (prevCursor === null) {
+        // First run: set the cursor, scan starts next cycle.
+        state.whaleScan = { lastBlock: head, at: now, percent: whalePct, threshold: whaleThreshold };
+      } else if (head > prevCursor) {
+        const scan = await scanWhaleTxs(prevCursor, head, whaleThreshold);
+        for (const tx of scan.found) {
+          tx.fromTag = tagAddress(tx.from);
+          tx.toTag = tagAddress(tx.to);
+        }
+        whaleFound = scan.found.length;
+        state.whaleTxs = [...scan.found.reverse(), ...state.whaleTxs].slice(0, WHALE_KEEP);
+        state.whaleScan = {
+          lastBlock: scan.lastBlock,
+          at: now,
+          percent: whalePct,
+          threshold: whaleThreshold,
+          scanned: scan.scanned,
+          skipped: scan.skipped || 0,
+        };
+      }
+    } catch (e) {
+      // Scan failure never fails the check; cursor stays put and we retry next cycle.
+      console.error("whale scan failed:", e);
+      state.whaleScan = {
+        ...(state.whaleScan || {}),
+        at: now,
+        percent: whalePct,
+        threshold: whaleThreshold,
+        error: String((e && e.message) || e).slice(0, 160),
+      };
+    }
+
     // --- Price-move correlation flag --------------------------------------
     // Compare the last ~1h: aggregate net flow vs price move. A large flow
     // opposite in sign to the price move is the actionable divergence.
@@ -444,6 +600,8 @@ module.exports = async (req, res) => {
       ok: true,
       checked: now,
       thresholdPercent: thresholdPct,
+      whaleTxPercent: whalePct,
+      whaleTxsFound: whaleFound,
       alertsFired: fired.length,
       balances,
     });

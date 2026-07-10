@@ -161,6 +161,44 @@
     line-height: 1.5;
   }
   .banner.show { display: block; }
+  .whale-section { margin-bottom: 2.5rem; }
+  .whale-list {
+    background: var(--panel);
+    border: 1px solid var(--line);
+    border-radius: 10px;
+    overflow: hidden;
+  }
+  .whale-row {
+    display: flex;
+    flex-wrap: wrap;
+    align-items: baseline;
+    gap: .4rem 1rem;
+    padding: .75rem 1.1rem;
+    border-bottom: 1px solid var(--line);
+    border-left: 3px solid transparent;
+    font-family: var(--mono);
+    font-size: .78rem;
+  }
+  .whale-row:last-child { border-bottom: none; }
+  .whale-row.deposit { border-left-color: var(--crimson); }
+  .whale-row.withdrawal { border-left-color: var(--jade); }
+  .whale-row.neutral { border-left-color: var(--muted); }
+  .whale-row time { color: var(--muted); font-size: .7rem; min-width: 10ch; }
+  .whale-amt { font-weight: 600; font-variant-numeric: tabular-nums; }
+  .whale-row.deposit .whale-amt { color: var(--crimson); }
+  .whale-row.withdrawal .whale-amt { color: var(--jade); }
+  .whale-row.neutral .whale-amt { color: var(--text); }
+  .whale-route { color: var(--muted); }
+  .whale-route b { color: var(--text); font-weight: 600; }
+  .whale-row a {
+    margin-left: auto;
+    color: var(--muted);
+    text-decoration: none;
+    font-size: .7rem;
+    border-bottom: 1px dotted var(--line);
+  }
+  .whale-row a:hover { color: var(--text); }
+  .whale-list .empty { padding: 1rem 1.1rem; border: none; }
   .chart-section { margin-bottom: 2.5rem; }
   .range-row { display: flex; gap: .5rem; margin-bottom: 1rem; }
   .range-btn {
@@ -289,6 +327,15 @@
 
   <div class="grid" id="cards"></div>
 
+  <section class="whale-section">
+    <h2 class="grid-title">Whale feed
+      <small id="whale-sub">large on-chain transfers, scanning every block</small>
+    </h2>
+    <div class="whale-list" id="whale-list">
+      <div class="empty">Scanning begins with the next check cycle.</div>
+    </div>
+  </section>
+
   <section class="chart-section">
     <h2 class="grid-title" style="margin-bottom:.6rem">Price vs exchange net flows
       <small>cumulative wallet flow (QUAI, left) against QUAI/USD price (right)</small>
@@ -339,7 +386,7 @@
     Balances sampled every 5 min via Quai RPC ·
     <b class="in">▲ inflow</b> to exchange ·
     <b class="out">▼ outflow</b> from exchange
-    <span class="ver">v14-trend-corr</span>
+    <span class="ver">v15-whale-feed</span>
   </footer>
 </div>
 
@@ -473,6 +520,36 @@ async function refresh() {
           </span>
         </div>`;
       }).join("");
+    }
+    // whale feed
+    const wl = document.getElementById("whale-list");
+    const wsub = document.getElementById("whale-sub");
+    if (s.whaleScan) {
+      const thr = s.whaleScan.threshold
+        ? "~" + Math.round(s.whaleScan.threshold).toLocaleString("en-US") + " QUAI"
+        : "";
+      wsub.textContent = `transfers ≥ ${s.whaleScan.percent}% of combined watched balance (${thr}) · every block scanned`;
+      if (s.whaleScan.error) {
+        wsub.textContent += " · ⚠ last scan failed, retrying";
+      }
+    }
+    const short = a => a ? a.slice(0, 8) + "…" + a.slice(-4) : "?";
+    if (s.whaleTxs && s.whaleTxs.length) {
+      wl.innerHTML = s.whaleTxs.map(tx => {
+        const cls = tx.toTag ? "deposit" : tx.fromTag ? "withdrawal" : "neutral";
+        const fromLabel = tx.fromTag ? `<b>${tx.fromTag}</b>` : short(tx.from);
+        const toLabel = tx.toTag ? `<b>${tx.toTag}</b>` : short(tx.to);
+        const badge = tx.toTag ? "▲ deposit" : tx.fromTag ? "▼ withdrawal" : "→ transfer";
+        return `
+        <div class="whale-row ${cls}">
+          <time>${new Date(tx.t).toLocaleString()}</time>
+          <span class="whale-amt">${fmt(tx.quai)} QUAI</span>
+          <span class="whale-route">${badge} · ${fromLabel} → ${toLabel}</span>
+          <a href="https://quaiscan.io/tx/${tx.hash}" target="_blank" rel="noopener">tx ↗</a>
+        </div>`;
+      }).join("");
+    } else if (s.whaleScan && !s.whaleScan.error) {
+      wl.innerHTML = '<div class="empty">No transfers above the threshold seen yet — the feed populates as whale-sized moves happen on-chain.</div>';
     }
   } catch (e) {
     // Keep whatever is already rendered; just say the live feed is unreachable.
