@@ -1,0 +1,125 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<meta name="robots" content="noindex, nofollow">
+<title>Monitor Admin</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Space+Grotesk:wght@400;500;700&family=IBM+Plex+Mono:wght@400;500;600&display=swap" rel="stylesheet">
+<style>
+  :root {
+    --ink: #0b0e11; --panel: #14181d; --line: #262c33;
+    --text: #e8eaed; --muted: #8b949e;
+    --crimson: #e4342b; --jade: #3fb68b;
+    --mono: "IBM Plex Mono", monospace; --sans: "Space Grotesk", sans-serif;
+  }
+  * { margin: 0; padding: 0; box-sizing: border-box; }
+  body {
+    background: var(--ink); color: var(--text); font-family: var(--sans);
+    min-height: 100vh; padding: 3rem 1.25rem;
+  }
+  .wrap { max-width: 560px; margin: 0 auto; }
+  h1 { font-size: 1.05rem; font-weight: 700; margin-bottom: .4rem; }
+  h1 span { color: var(--crimson); }
+  .sub { font-family: var(--mono); font-size: .72rem; color: var(--muted); margin-bottom: 2rem; }
+  .panel {
+    background: var(--panel); border: 1px solid var(--line);
+    border-radius: 10px; padding: 1.5rem;
+  }
+  label {
+    display: block; font-family: var(--mono); font-size: .72rem;
+    text-transform: uppercase; letter-spacing: .12em; color: var(--muted);
+    margin: 1.1rem 0 .4rem;
+  }
+  label:first-child { margin-top: 0; }
+  input {
+    width: 100%; background: var(--ink); border: 1px solid var(--line);
+    border-radius: 6px; color: var(--text); font-family: var(--mono);
+    font-size: .9rem; padding: .55rem .7rem;
+  }
+  input:focus { outline: 2px solid var(--crimson); outline-offset: 1px; }
+  button {
+    margin-top: 1.4rem; width: 100%; background: var(--crimson); border: none;
+    border-radius: 6px; color: #fff; font-family: var(--sans); font-weight: 500;
+    font-size: .9rem; padding: .7rem 1rem; cursor: pointer;
+  }
+  button:hover { filter: brightness(1.1); }
+  #msg { margin-top: .9rem; font-family: var(--mono); font-size: .75rem; color: var(--muted); min-height: 1.2em; }
+  #msg.ok { color: var(--jade); }
+  #msg.err { color: var(--crimson); }
+  .back {
+    display: inline-block; margin-top: 1.6rem; font-family: var(--mono);
+    font-size: .72rem; color: var(--muted); text-decoration: none;
+    border-bottom: 1px dotted var(--line);
+  }
+  .back:hover { color: var(--text); }
+</style>
+</head>
+<body>
+<div class="wrap">
+  <h1>QUAI Monitor <span>/</span> Admin</h1>
+  <div class="sub">Alert configuration · changes require the secret</div>
+
+  <div class="panel">
+    <label for="pct">Alert when the 24h net change exceeds (%)</label>
+    <input id="pct" type="number" min="0.01" max="100" step="0.01">
+
+    <label for="secret">Secret</label>
+    <input id="secret" type="password" placeholder="CRON_SECRET" autocomplete="off">
+
+    <button id="save">Save threshold</button>
+    <div id="msg"></div>
+  </div>
+
+  <a class="back" href="/">← back to dashboard</a>
+</div>
+
+<script>
+// Prefill current threshold
+fetch("/api/config")
+  .then(r => r.json())
+  .then(j => { if (j.thresholdPercent) document.getElementById("pct").value = j.thresholdPercent; })
+  .catch(() => {});
+
+document.getElementById("save").addEventListener("click", async () => {
+  const msg = document.getElementById("msg");
+  const pct = parseFloat(document.getElementById("pct").value);
+  const secret = document.getElementById("secret").value;
+
+  msg.className = "";
+  if (!Number.isFinite(pct) || pct <= 0 || pct > 100) {
+    msg.textContent = "Enter a percent between 0.01 and 100.";
+    msg.className = "err";
+    return;
+  }
+  if (!secret) {
+    msg.textContent = "Enter the secret to save.";
+    msg.className = "err";
+    return;
+  }
+
+  msg.textContent = "Saving…";
+  try {
+    const r = await fetch("/api/config", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ thresholdPercent: pct, secret }),
+    });
+    const j = await r.json();
+    if (r.ok) {
+      msg.textContent = "Saved. Applies from the next check.";
+      msg.className = "ok";
+    } else {
+      msg.textContent = j.error === "wrong secret" ? "Wrong secret." : (j.error || "Save failed.");
+      msg.className = "err";
+    }
+  } catch (e) {
+    msg.textContent = "Save failed — network error.";
+    msg.className = "err";
+  }
+});
+</script>
+</body>
+</html>

@@ -85,8 +85,8 @@ function weiToQuai(weiStr) {
   return Number((wei * 100n) / WEI) / 100;
 }
 
-async function rpcGetBalance(address, id) {
-  const r = await fetch(RPC_URL, {
+async function rpcGetBalanceOnce(address, id) {
+  const r = await fetchWithTimeout(RPC_URL, {
     method: "POST",
     headers: { "Content-Type": "application/json" },
     body: JSON.stringify({
@@ -112,13 +112,51 @@ async function rpcGetBalance(address, id) {
   return weiToQuai(BigInt(j.result).toString());
 }
 
+// External fetches get a hard timeout so a hung endpoint can't stall the
+// whole function until Vercel kills it.
+async function fetchWithTimeout(url, opts = {}, ms = 10000) {
+  const ctl = new AbortController();
+  const timer = setTimeout(() => ctl.abort(), ms);
+  try {
+    return await fetch(url, { ...opts, signal: ctl.signal });
+  } finally {
+    clearTimeout(timer);
+  }
+}
+
+async function fetchPrice() {
+  try {
+    const r = await fetchWithTimeout("https://api.kraken.com/0/public/Ticker?pair=QUAIUSD");
+    const j = await r.json();
+    const key = Object.keys(j.result || {})[0];
+    const px = key ? parseFloat(j.result[key].c[0]) : null;
+    return Number.isFinite(px) ? px : null;
+  } catch (_) {
+    return null;
+  }
+}
+
 async function fetchBalances() {
   const out = {};
+  const errors = [];
   let id = 1;
   for (const a of Object.keys(WATCHED)) {
-    out[a] = await rpcGetBalance(a, id++);
+    try {
+      out[a] = await rpcGetBalance(a, id++);
+    } catch (e) {
+      errors.push(`${WATCHED[a]}: ${String((e && e.message) || e).slice(0, 140)}`);
+    }
   }
-  return out;
+  return { balances: out, errors };
+}
+
+async function rpcGetBalance(address, id) {
+  try {
+    return await rpcGetBalanceOnce(address, id);
+  } catch (first) {
+    await new Promise((r) => setTimeout(r, 1500));
+    return rpcGetBalanceOnce(address, id); // second attempt; throws if it fails too
+  }
 }
 
 // --- History reference lookups ------------------------------------------
@@ -195,16 +233,32 @@ module.exports = async (req, res) => {
         ? Number(config.thresholdPercent)
         : DEFAULT_THRESHOLD_PCT;
 
-    const balances = await fetchBalances();
+    const { balances, errors } = await fetchBalances();
+    const price = await fetchPrice();
     const state = (await redisGet(STATE_KEY)) || { exchanges: {}, alerts: [] };
     if (!Array.isArray(state.history)) state.history = [];
+    if (price !== null) state.price = { usd: price, at: now };
+
+    if (Object.keys(balances).length === 0) {
+      // Total RPC failure: record it so the dashboard can say so; keep old data.
+      state.lastError = { time: now, message: `RPC unreachable — ${errors.join(" | ")}` };
+      await redisSet(STATE_KEY, state);
+      return res.status(502).json({ ok: false, error: state.lastError.message });
+    }
+    if (errors.length) {
+      state.lastError = { time: now, message: `Partial data — ${errors.join(" | ")}` };
+    } else {
+      delete state.lastError; // healthy run clears the banner
+    }
 
     // Append hourly sample, prune old ones
     const lastSample = state.history.length
       ? new Date(state.history[state.history.length - 1].t).getTime()
       : 0;
     if (nowMs - lastSample >= SAMPLE_EVERY_MS || !state.history.length) {
-      state.history.push({ t: now, b: balances });
+      const sample = { t: now, b: balances };
+      if (price !== null) sample.p = price;
+      state.history.push(sample);
     }
     // Prune beyond 30.5 days, and thin resolution for samples older than
     // the dense window (keep ~6h spacing) to cap storage size.

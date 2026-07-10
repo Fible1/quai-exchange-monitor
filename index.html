@@ -7,6 +7,7 @@
 <link rel="preconnect" href="https://fonts.googleapis.com">
 <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
 <link href="https://fonts.googleapis.com/css2?family=Space+Grotesk:wght@400;500;700&family=IBM+Plex+Mono:wght@400;500;600&display=swap" rel="stylesheet">
+<script src="https://cdnjs.cloudflare.com/ajax/libs/Chart.js/4.4.1/chart.umd.min.js"></script>
 <style>
   :root {
     --ink: #0b0e11;
@@ -147,6 +148,34 @@
   }
   .addr:hover { color: var(--text); }
 
+  .banner {
+    display: none;
+    background: rgba(228, 52, 43, .08);
+    border: 1px solid rgba(228, 52, 43, .4);
+    border-radius: 8px;
+    color: var(--text);
+    font-family: var(--mono);
+    font-size: .74rem;
+    padding: .7rem .9rem;
+    margin-bottom: 1.2rem;
+    line-height: 1.5;
+  }
+  .banner.show { display: block; }
+  .chart-section { margin-bottom: 2.5rem; }
+  .range-row { display: flex; gap: .5rem; margin-bottom: 1rem; }
+  .range-btn {
+    background: var(--panel); border: 1px solid var(--line); border-radius: 6px;
+    color: var(--muted); font-family: var(--mono); font-size: .72rem;
+    padding: .35rem .8rem; cursor: pointer;
+  }
+  .range-btn.active { color: var(--text); border-color: var(--crimson); }
+  .chart-wrap {
+    background: var(--panel); border: 1px solid var(--line); border-radius: 10px;
+    padding: 1rem; height: 320px;
+  }
+  .chart-note {
+    margin-top: .5rem; font-family: var(--mono); font-size: .7rem; color: var(--muted);
+  }
   h2 {
     font-size: .8rem;
     font-family: var(--mono);
@@ -172,48 +201,6 @@
   .amt.down { color: var(--jade); }
   .empty { color: var(--muted); font-family: var(--mono); font-size: .8rem; padding: 1rem 0; }
 
-  .settings {
-    border-top: 1px solid var(--line);
-    margin-top: 2.5rem;
-    padding-top: 1.5rem;
-  }
-  .settings-row {
-    display: flex;
-    flex-wrap: wrap;
-    align-items: center;
-    gap: .75rem;
-    font-family: var(--mono);
-    font-size: .8rem;
-  }
-  .settings input {
-    background: var(--panel);
-    border: 1px solid var(--line);
-    border-radius: 6px;
-    color: var(--text);
-    font-family: var(--mono);
-    font-size: .8rem;
-    padding: .45rem .6rem;
-  }
-  .settings input:focus { outline: 2px solid var(--crimson); outline-offset: 1px; }
-  #pct-input { width: 5.5rem; }
-  #secret-input { width: 14rem; }
-  .settings button {
-    background: var(--crimson);
-    border: none;
-    border-radius: 6px;
-    color: #fff;
-    font-family: var(--sans);
-    font-weight: 500;
-    font-size: .8rem;
-    padding: .5rem 1rem;
-    cursor: pointer;
-  }
-  .settings button:hover { filter: brightness(1.1); }
-  .settings button:focus-visible { outline: 2px solid var(--text); outline-offset: 2px; }
-  #save-msg { color: var(--muted); font-size: .72rem; }
-  #save-msg.ok { color: var(--jade); }
-  #save-msg.err { color: var(--crimson); }
-
   footer {
     margin-top: 2.5rem;
     font-family: var(--mono);
@@ -237,27 +224,30 @@
   <h2 class="grid-title">Net flow · last 24 hours
     <small>cumulative balance change per exchange over the past day</small>
   </h2>
+  <div class="banner" id="errbanner"></div>
+
   <div class="grid" id="cards"></div>
+
+  <section class="chart-section">
+    <h2 class="grid-title" style="margin-bottom:.6rem">Price vs exchange net flows
+      <small>cumulative wallet flow (QUAI, left) against QUAI/USD price (right)</small>
+    </h2>
+    <div class="range-row">
+      <button class="range-btn" data-range="1">24h</button>
+      <button class="range-btn active" data-range="7">7d</button>
+      <button class="range-btn" data-range="30">30d</button>
+    </div>
+    <div class="chart-wrap"><canvas id="flowchart"></canvas></div>
+    <div class="chart-note" id="chart-note"></div>
+  </section>
 
   <section class="alerts">
     <h2 id="alerts-heading">Alerts</h2>
     <div id="alert-list"><div class="empty">No alerts yet.</div></div>
   </section>
 
-  <section class="settings">
-    <h2>Alert threshold</h2>
-    <div class="settings-row">
-      <label for="pct-input">Alert when the 24h net change exceeds</label>
-      <input id="pct-input" type="number" min="0.01" max="100" step="0.01" value="1"> %
-      <label for="secret-input">Secret</label>
-      <input id="secret-input" type="password" placeholder="CRON_SECRET" autocomplete="off">
-      <button id="save-btn">Save threshold</button>
-      <span id="save-msg"></span>
-    </div>
-  </section>
-
   <footer>
-    v8-adaptive-pct · Balances sampled every 5 min via Quai RPC ·
+    v12-avg-bar · Balances sampled every 5 min via Quai RPC ·
     <b class="in">▲ inflow</b> to exchange ·
     <b class="out">▼ outflow</b> from exchange
   </footer>
@@ -271,7 +261,6 @@ const fmtPct = n => {
   const dec = a === 0 ? 2 : a >= 1 ? 2 : a >= 0.1 ? 2 : a >= 0.01 ? 3 : 4;
   return (n > 0 ? "+" : n < 0 ? "−" : "±") + a.toFixed(dec) + "%";
 };
-let currentThreshold = null;
 
 function periodCells(pct, abs) {
   if (pct === null || pct === undefined) {
@@ -287,10 +276,29 @@ function deltaClass(d) {
   return d > 0 ? "up" : "down";
 }
 
+function setBanner(text) {
+  const b = document.getElementById("errbanner");
+  if (text) {
+    b.textContent = "⚠ " + text;
+    b.classList.add("show");
+  } else {
+    b.classList.remove("show");
+  }
+}
+
 async function refresh() {
   try {
     const r = await fetch("/api/status");
     const s = await r.json();
+    if (s.error) throw new Error(s.error);
+
+    // Checker-reported data-source problems (RPC down, partial data)
+    if (s.lastError && s.lastError.time) {
+      const ageMin = Math.round((Date.now() - new Date(s.lastError.time).getTime()) / 60000);
+      setBanner(`data source issue ${ageMin}m ago: ${s.lastError.message} — showing last good data`);
+    } else {
+      setBanner(null);
+    }
 
     // header
     const lc = document.getElementById("last-check");
@@ -309,11 +317,6 @@ async function refresh() {
     if (s.thresholdPercent) {
       document.getElementById("alerts-heading").textContent =
         "Alerts · 24h net change > " + s.thresholdPercent + "%";
-      const inp = document.getElementById("pct-input");
-      if (currentThreshold === null && document.activeElement !== inp) {
-        inp.value = s.thresholdPercent;
-        currentThreshold = s.thresholdPercent;
-      }
     }
 
     // cards
@@ -366,54 +369,201 @@ async function refresh() {
         </div>`).join("");
     }
   } catch (e) {
-    document.getElementById("last-check").textContent = "status fetch failed";
+    // Keep whatever is already rendered; just say the live feed is unreachable.
+    document.getElementById("last-check").textContent = "live feed unreachable";
+    document.getElementById("dot").classList.add("stale");
+    setBanner("dashboard API unreachable — showing last loaded data. It will recover automatically.");
   }
 }
 
-// --- threshold editor ----------------------------------------------------
-document.getElementById("save-btn").addEventListener("click", async () => {
-  const msg = document.getElementById("save-msg");
-  const pct = parseFloat(document.getElementById("pct-input").value);
-  const secret = document.getElementById("secret-input").value;
-
-  msg.className = "";
-  if (!Number.isFinite(pct) || pct <= 0 || pct > 100) {
-    msg.textContent = "Enter a percent between 0.01 and 100.";
-    msg.className = "err";
-    return;
-  }
-  if (!secret) {
-    msg.textContent = "Enter the secret to save.";
-    msg.className = "err";
-    return;
-  }
-
-  msg.textContent = "Saving…";
-  try {
-    const r = await fetch("/api/config", {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ thresholdPercent: pct, secret }),
-    });
-    const j = await r.json();
-    if (r.ok) {
-      msg.textContent = "Saved. New threshold applies from the next check.";
-      msg.className = "ok";
-      currentThreshold = pct;
-      document.getElementById("alerts-heading").textContent =
-        "Alerts · 24h net change > " + pct + "%";
-    } else {
-      msg.textContent = j.error === "wrong secret" ? "Wrong secret." : (j.error || "Save failed.");
-      msg.className = "err";
-    }
-  } catch (e) {
-    msg.textContent = "Save failed — network error.";
-    msg.className = "err";
-  }
-});
-
 refresh();
 setInterval(refresh, 60000);
+
+// --- price vs flows chart ------------------------------------------------
+const FLOW_COLORS = { "MEXC": "#e4342b", "Gate.io": "#3fb68b", "Kraken cold": "#6aa2ff" };
+const PRICE_COLOR = "#f0b429";
+let chartData = null;
+let chart = null;
+let rangeDays = 7;
+
+async function loadChart() {
+  try {
+    const r = await fetch("/api/history");
+    chartData = await r.json();
+    renderChart();
+  } catch (e) {
+    document.getElementById("chart-note").textContent = chart
+      ? "chart refresh failed — showing last loaded data"
+      : "chart data unavailable";
+  }
+}
+
+function renderChart() {
+  if (!chartData || typeof Chart === "undefined") return;
+  const note = document.getElementById("chart-note");
+  const nowMs = Date.now();
+  const cutoff = nowMs - rangeDays * 24 * 3600 * 1000;
+  const bucketMs = rangeDays === 30 ? 6 * 3600 * 1000 : 3600 * 1000;
+
+  const samples = (chartData.history || [])
+    .map(s => ({ t: new Date(s.t).getTime(), b: s.b }))
+    .sort((a, b) => a.t - b.t);
+
+  // Bucket grid covering the selected range
+  const firstBucket = Math.floor(cutoff / bucketMs) * bucketMs;
+  const buckets = [];
+  for (let t = firstBucket; t <= nowMs; t += bucketMs) buckets.push(t);
+  const bucketIndex = (t) => Math.floor((t - firstBucket) / bucketMs);
+
+  const addrNames = { "0x006243e4eE6C2CF6F993036f27f0A88f265Ddb4a": "MEXC",
+                      "0x007e2F1a4709B812F339f22E18032118FBcc8987": "Gate.io",
+                      "0x004cd3a9997a5170A9234CEddD1ec5DCE7Db23c3": "Kraken cold" };
+
+  // Per-interval net flow: delta between consecutive samples, spread evenly
+  // across the buckets the gap covers (handles thinned older samples honestly).
+  const flows = {};
+  for (const addr of Object.keys(addrNames)) flows[addr] = buckets.map(() => 0);
+  for (let i = 1; i < samples.length; i++) {
+    const a = samples[i - 1], b = samples[i];
+    if (b.t < cutoff) continue;
+    for (const addr of Object.keys(addrNames)) {
+      if (a.b[addr] === undefined || b.b[addr] === undefined) continue;
+      const delta = b.b[addr] - a.b[addr];
+      if (delta === 0) continue;
+      const i0 = Math.max(0, bucketIndex(a.t));
+      const i1 = Math.min(buckets.length - 1, bucketIndex(b.t));
+      const n = i1 - i0 + 1;
+      for (let k = i0; k <= i1; k++) flows[addr][k] += delta / n;
+    }
+  }
+  const anyFlow = Object.values(flows).some(arr => arr.some(v => v !== 0));
+
+  // One bar per interval: the average of the three wallets' net flows
+  const addrs = Object.keys(addrNames);
+  const avgFlow = buckets.map((_, i) => {
+    let sum = 0;
+    for (const a of addrs) sum += flows[a][i];
+    return sum / addrs.length;
+  });
+
+  // Price per bucket: latest hourly close at or before each bucket's end
+  const price = (chartData.price || []).slice().sort((a, b) => a[0] - b[0]);
+  const priceAt = buckets.map(t => {
+    const endT = t + bucketMs;
+    let px = null;
+    for (const p of price) {
+      if (p[0] <= endT) px = p[1];
+      else break;
+    }
+    return px;
+  });
+
+  const intervalLabel = bucketMs === 3600000 ? "1-hour" : "6-hour";
+  note.textContent = anyFlow
+    ? `bars: average net flow across the 3 wallets per ${intervalLabel} interval (▲ inflow, ▼ outflow) · line: QUAI/USD`
+    : `collecting flow history — bars fill in as samples accumulate · showing ${intervalLabel} intervals`;
+
+  const barSets = [{
+    type: "bar",
+    label: "avg exchange net flow",
+    data: avgFlow,
+    backgroundColor: avgFlow.map(v => v > 0 ? "#e4342bb8" : v < 0 ? "#3fb68bb8" : "#8b949e55"),
+    borderWidth: 0,
+    yAxisID: "yFlow",
+    order: 2,
+  }];
+
+  const priceSet = {
+    type: "line",
+    label: "QUAI/USD",
+    data: priceAt,
+    borderColor: PRICE_COLOR,
+    backgroundColor: "transparent",
+    borderWidth: 1.8,
+    pointRadius: 0,
+    spanGaps: true,
+    yAxisID: "yPrice",
+    tension: 0.2,
+    order: 1,
+  };
+
+  const fmtTick = (ms) => {
+    const d = new Date(ms);
+    return rangeDays === 1
+      ? d.toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" })
+      : d.toLocaleDateString([], { month: "short", day: "numeric" });
+  };
+
+  const cfg = {
+    data: {
+      labels: buckets,
+      datasets: [priceSet, ...barSets],
+    },
+    options: {
+      responsive: true,
+      maintainAspectRatio: false,
+      animation: false,
+      interaction: { mode: "index", intersect: false },
+      scales: {
+        x: {
+          ticks: { color: "#8b949e", maxTicksLimit: 8,
+                   callback: (v, i) => fmtTick(buckets[i]),
+                   font: { family: "IBM Plex Mono", size: 10 } },
+          grid: { color: "#262c33" },
+        },
+        yFlow: {
+          position: "left",
+          title: { display: true, text: "avg net flow / interval (QUAI)", color: "#8b949e",
+                   font: { family: "IBM Plex Mono", size: 10 } },
+          ticks: { color: "#8b949e", font: { family: "IBM Plex Mono", size: 10 },
+                   callback: (v) => Math.abs(v) >= 1e6 ? (v/1e6).toFixed(1) + "M"
+                                  : Math.abs(v) >= 1e3 ? (v/1e3).toFixed(0) + "K" : v },
+          grid: { color: "#262c33" },
+        },
+        yPrice: {
+          position: "right",
+          title: { display: true, text: "QUAI/USD", color: PRICE_COLOR,
+                   font: { family: "IBM Plex Mono", size: 10 } },
+          ticks: { color: PRICE_COLOR, font: { family: "IBM Plex Mono", size: 10 } },
+          grid: { drawOnChartArea: false },
+        },
+      },
+      plugins: {
+        legend: { labels: { color: "#e8eaed", boxWidth: 14,
+                            font: { family: "Space Grotesk", size: 11 } } },
+        tooltip: {
+          callbacks: {
+            title: (items) => items.length ? new Date(buckets[items[0].dataIndex]).toLocaleString() : "",
+            label: (item) => {
+              if (item.dataset.label === "QUAI/USD") {
+                return item.parsed.y === null ? null : ` QUAI/USD: $${item.parsed.y}`;
+              }
+              const v = item.parsed.y;
+              if (!v) return null;
+              const s = (v > 0 ? "+" : "−") + Math.round(Math.abs(v)).toLocaleString("en-US");
+              return ` avg net flow: ${s} QUAI (${v > 0 ? "into" : "out of"} exchanges)`;
+            },
+          },
+        },
+      },
+    },
+  };
+
+  if (chart) chart.destroy();
+  chart = new Chart(document.getElementById("flowchart"), cfg);
+}
+
+document.querySelectorAll(".range-btn").forEach(btn => {
+  btn.addEventListener("click", () => {
+    document.querySelectorAll(".range-btn").forEach(b => b.classList.remove("active"));
+    btn.classList.add("active");
+    rangeDays = Number(btn.dataset.range);
+    renderChart();
+  });
+});
+
+loadChart();
+setInterval(loadChart, 5 * 60 * 1000);
 </script>
 </body>
 </html>
