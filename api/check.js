@@ -596,6 +596,16 @@ module.exports = async (req, res) => {
       );
     }
 
+    // Dead man's switch: report a fully successful run. Silence -> alert.
+    // Best-effort: a heartbeat outage must never fail the check itself.
+    if (process.env.HEALTHCHECK_URL) {
+      try {
+        await fetchWithTimeout(process.env.HEALTHCHECK_URL, {}, 5000);
+      } catch (e) {
+        console.error("heartbeat ping failed:", e);
+      }
+    }
+
     return res.status(200).json({
       ok: true,
       checked: now,
