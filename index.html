@@ -207,6 +207,22 @@
   }
   .whale-row a:hover { color: var(--text); }
   .whale-list .empty { padding: 1rem 1.1rem; border: none; }
+  .whale-row.whale-extra { display: none; }
+  .whale-list.expanded .whale-row.whale-extra { display: flex; }
+  .whale-toggle {
+    display: block;
+    width: 100%;
+    background: transparent;
+    border: none;
+    border-top: 1px solid var(--line);
+    color: var(--muted);
+    font-family: var(--mono);
+    font-size: .74rem;
+    padding: .7rem;
+    cursor: pointer;
+    letter-spacing: .04em;
+  }
+  .whale-toggle:hover { color: var(--text); background: rgba(255,255,255,.02); }
   .chart-section { margin-bottom: 2.5rem; }
   .range-row { display: flex; gap: .5rem; margin-bottom: 1rem; }
   .range-btn {
@@ -394,7 +410,7 @@
     Balances sampled every 5 min via Quai RPC ·
     <b class="in">▲ inflow</b> to exchange ·
     <b class="out">▼ outflow</b> from exchange
-    <span class="ver">v18-latin1-fix</span>
+    <span class="ver">v19-whale-collapse</span>
   </footer>
 </div>
 
@@ -543,19 +559,39 @@ async function refresh() {
     }
     const short = a => a ? a.slice(0, 8) + "…" + a.slice(-4) : "?";
     if (s.whaleTxs && s.whaleTxs.length) {
-      wl.innerHTML = s.whaleTxs.map(tx => {
+      const rows = s.whaleTxs.map((tx, i) => {
         const cls = tx.toTag ? "deposit" : tx.fromTag ? "withdrawal" : "neutral";
         const fromLabel = tx.fromTag ? `<b>${tx.fromTag}</b>` : short(tx.from);
         const toLabel = tx.toTag ? `<b>${tx.toTag}</b>` : short(tx.to);
         const badge = tx.toTag ? "▲ deposit" : tx.fromTag ? "▼ withdrawal" : "→ transfer";
+        const hide = i >= 10 ? " whale-extra" : "";
         return `
-        <div class="whale-row ${cls}">
+        <div class="whale-row ${cls}${hide}">
           <time>${new Date(tx.t).toLocaleString()}</time>
           <span class="whale-amt">${fmt(tx.quai)} QUAI</span>
           <span class="whale-route">${badge} · ${fromLabel} → ${toLabel}</span>
           <a href="https://quaiscan.io/tx/${tx.hash}" target="_blank" rel="noopener">tx ↗</a>
         </div>`;
       }).join("");
+      const extra = s.whaleTxs.length - 10;
+      const toggle = extra > 0
+        ? `<button class="whale-toggle" id="whale-toggle" data-expanded="0">Show all ${s.whaleTxs.length} ↓</button>`
+        : "";
+      wl.innerHTML = rows + toggle;
+      if (extra > 0) {
+        // Preserve expanded state across refreshes
+        if (window.__whaleExpanded) wl.classList.add("expanded");
+        const btn = document.getElementById("whale-toggle");
+        btn.dataset.expanded = window.__whaleExpanded ? "1" : "0";
+        btn.textContent = window.__whaleExpanded
+          ? "Show less ↑" : `Show all ${s.whaleTxs.length} ↓`;
+        btn.addEventListener("click", () => {
+          window.__whaleExpanded = !window.__whaleExpanded;
+          wl.classList.toggle("expanded", window.__whaleExpanded);
+          btn.textContent = window.__whaleExpanded
+            ? "Show less ↑" : `Show all ${s.whaleTxs.length} ↓`;
+        });
+      }
     } else if (s.whaleScan && !s.whaleScan.error) {
       wl.innerHTML = '<div class="empty">No transfers above the threshold seen yet — the feed populates as whale-sized moves happen on-chain.</div>';
     }
