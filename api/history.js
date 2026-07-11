@@ -1,6 +1,6 @@
 // api/history.js — public, read-only. Feeds the price-vs-flows chart.
 // Returns { history: [{t, b, p?}], price: [[ms, close]] }
-// history = our own balance samples; price = Kraken hourly OHLC backfill.
+// history = our own balance samples; price = MEXC hourly kline backfill.
 
 const REDIS_URL =
   process.env.UPSTASH_REDIS_REST_URL || process.env.KV_REST_API_URL;
@@ -35,20 +35,18 @@ async function redisCall(path, opts = {}) {
   return j;
 }
 
-async function krakenHourly() {
+async function mexcHourly() {
   try {
     const ctl = new AbortController();
     const timer = setTimeout(() => ctl.abort(), 10000);
     const r = await fetch(
-      "https://api.kraken.com/0/public/OHLC?pair=QUAIUSD&interval=60",
+      "https://api.mexc.com/api/v3/klines?symbol=QUAIUSDT&interval=60m&limit=720",
       { signal: ctl.signal }
     ).finally(() => clearTimeout(timer));
     const j = await r.json();
-    if (j.error && j.error.length) return [];
-    const key = Object.keys(j.result || {}).find((k) => k !== "last");
-    if (!key) return [];
-    // candle: [time, open, high, low, close, vwap, volume, count]
-    return j.result[key].map((c) => [c[0] * 1000, parseFloat(c[4])]);
+    if (!Array.isArray(j)) return [];
+    // kline: [openTime(ms), open, high, low, close, volume, closeTime, ...]
+    return j.map((c) => [c[0], parseFloat(c[4])]);
   } catch (_) {
     return [];
   }
@@ -62,7 +60,7 @@ module.exports = async (req, res) => {
     const j = await redisCall("/get/quai_monitor_state");
     const state = j.result ? JSON.parse(j.result) : {};
     const history = Array.isArray(state.history) ? state.history : [];
-    const price = await krakenHourly();
+    const price = await mexcHourly();
 
     res.setHeader("Cache-Control", "public, max-age=120");
     return res.status(200).json({ history, price });

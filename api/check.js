@@ -144,10 +144,11 @@ async function fetchWithTimeout(url, opts = {}, ms = 10000) {
 
 async function fetchPrice() {
   try {
-    const r = await fetchWithTimeout("https://api.kraken.com/0/public/Ticker?pair=QUAIUSD");
+    const r = await fetchWithTimeout(
+      "https://api.mexc.com/api/v3/ticker/price?symbol=QUAIUSDT"
+    );
     const j = await r.json();
-    const key = Object.keys(j.result || {})[0];
-    const px = key ? parseFloat(j.result[key].c[0]) : null;
+    const px = parseFloat(j.price);
     return Number.isFinite(px) ? px : null;
   } catch (_) {
     return null;
@@ -569,10 +570,45 @@ module.exports = async (req, res) => {
     }
     try {
       const head = await rpcBlockNumber();
-      const prevCursor =
+
+      // Chain-head staleness: read the head block's timestamp. If the RPC's
+      // tip is old, the node is behind (or the chain stalled) — warn on the
+      // dashboard but keep serving last-good data.
+      try {
+        const hb = await rpcRaw({
+          jsonrpc: "2.0",
+          method: "quai_getBlockByNumber",
+          params: ["0x" + head.toString(16), false],
+          id: 1,
+        });
+        const ts = blockTimestamp(hb && hb.result);
+        if (ts) {
+          const lagMin = Math.round((nowMs - new Date(ts).getTime()) / 60000);
+          state.chainHead = { block: head, time: ts, lagMin, at: now };
+          if (lagMin > 15) {
+            state.lastError = {
+              time: now,
+              message: `RPC is behind — latest block is ${lagMin} min old`,
+            };
+          }
+        } else {
+          state.chainHead = { block: head, at: now };
+        }
+      } catch (_) {
+        state.chainHead = { block: head, at: now };
+      }
+
+      let prevCursor =
         state.whaleScan && Number.isInteger(state.whaleScan.lastBlock)
           ? state.whaleScan.lastBlock
           : null;
+      // Cursor ahead of the node's head (node switch, reorg, or RPC rewind):
+      // reset rather than silently freezing the scan forever.
+      if (prevCursor !== null && prevCursor > head + 20) {
+        console.error(`whale scan cursor ${prevCursor} ahead of head ${head}; resetting`);
+        prevCursor = head;
+        state.whaleScan = { ...(state.whaleScan || {}), lastBlock: head, note: "cursor reset — RPC head moved backwards" };
+      }
       if (prevCursor === null) {
         // First run: set the cursor, scan starts next cycle.
         state.whaleScan = { lastBlock: head, at: now, percent: whalePct, threshold: whaleThreshold };

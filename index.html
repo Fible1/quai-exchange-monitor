@@ -432,7 +432,7 @@
 
   <section class="chart-section">
     <h2 class="grid-title" style="margin-bottom:.6rem">Price vs exchange net flows
-      <small>cumulative wallet flow (QUAI, left) against QUAI/USD price (right)</small>
+      <small>cumulative wallet flow (QUAI, left) against QUAI/USDT price (right)</small>
     </h2>
     <div class="range-row">
       <button class="range-btn" data-range="1">24h</button>
@@ -480,7 +480,7 @@
     Balances sampled every 5 min via Quai RPC ·
     <b class="in">▲ inflow</b> to exchange ·
     <b class="out">▼ outflow</b> from exchange
-    <span class="ver">v31-two-exchanges</span>
+    <span class="ver"><span id="block-stat">block —</span> · v32-mexc-rpc</span>
   </footer>
 </div>
 
@@ -550,6 +550,15 @@ async function refresh() {
     publicTags = s.publicTags || {};
     corrAlerts = (s.alerts || []).filter(a => a.type === "correlation");
     if (chartData) renderChart();
+
+    // footer block count
+    if (s.chainHead && s.chainHead.block) {
+      document.getElementById("block-stat").textContent =
+        "block " + s.chainHead.block.toLocaleString("en-US");
+    } else if (s.whaleScan && s.whaleScan.lastBlock) {
+      document.getElementById("block-stat").textContent =
+        "block " + s.whaleScan.lastBlock.toLocaleString("en-US");
+    }
 
     // header stats: live price + 24h gross volume
     if (s.price && s.price.usd) {
@@ -645,6 +654,9 @@ async function refresh() {
       wsub.textContent = `transfers ≥ ${s.whaleScan.percent}% of combined watched balance (${thr}) · every block scanned`;
       if (s.whaleScan.error) {
         wsub.textContent += " · ⚠ last scan failed, retrying";
+      }
+      if (s.whaleScan.skipped > 0) {
+        wsub.textContent += ` · catching up (skipped ${s.whaleScan.skipped} blocks)`;
       }
     }
     const short = a => a ? a.slice(0, 8) + "…" + a.slice(-4) : "?";
@@ -831,7 +843,7 @@ function renderChart() {
 
   const intervalLabel = bucketMs === 3600000 ? "1-hour" : "6-hour";
   note.textContent = anyFlow
-    ? `bars: average net flow across the watched wallets per ${intervalLabel} interval (▲ inflow, ▼ outflow) · line: QUAI/USD`
+    ? `bars: average net flow across the watched wallets per ${intervalLabel} interval (▲ inflow, ▼ outflow) · line: QUAI/USDT`
     : `collecting flow history — bars fill in as samples accumulate · showing ${intervalLabel} intervals`;
 
   const barSets = [{
@@ -846,7 +858,7 @@ function renderChart() {
 
   const priceSet = {
     type: "line",
-    label: "QUAI/USD",
+    label: "QUAI/USDT",
     data: priceAt,
     borderColor: PRICE_COLOR,
     backgroundColor: "transparent",
@@ -893,7 +905,7 @@ function renderChart() {
         },
         yPrice: {
           position: "right",
-          title: { display: true, text: "QUAI/USD", color: PRICE_COLOR,
+          title: { display: true, text: "QUAI/USDT", color: PRICE_COLOR,
                    font: { family: "IBM Plex Mono", size: 12 } },
           ticks: { color: PRICE_COLOR, font: { family: "IBM Plex Mono", size: 12 } },
           grid: { drawOnChartArea: false },
@@ -909,8 +921,8 @@ function renderChart() {
               if (item.dataset.label && item.dataset.label.includes("divergence")) {
                 return " ⚡ " + item.dataset.label;
               }
-              if (item.dataset.label === "QUAI/USD") {
-                return item.parsed.y === null ? null : ` QUAI/USD: $${item.parsed.y}`;
+              if (item.dataset.label === "QUAI/USDT") {
+                return item.parsed.y === null ? null : ` QUAI/USDT: $${item.parsed.y}`;
               }
               const v = item.parsed.y;
               if (!v) return null;
@@ -990,7 +1002,7 @@ function renderTrend() {
           tension: 0.2,
         },
         {
-          label: "QUAI/USD",
+          label: "QUAI/USDT",
           data: price,
           borderColor: PRICE_COLOR,
           backgroundColor: "transparent",
@@ -1027,7 +1039,7 @@ function renderTrend() {
         },
         yPrice: {
           position: "right",
-          title: { display: true, text: "QUAI/USD", color: PRICE_COLOR,
+          title: { display: true, text: "QUAI/USDT", color: PRICE_COLOR,
                    font: { family: "IBM Plex Mono", size: 12 } },
           ticks: { color: PRICE_COLOR, font: { family: "IBM Plex Mono", size: 12 } },
           grid: { drawOnChartArea: false },
