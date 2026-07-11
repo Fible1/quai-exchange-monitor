@@ -39,6 +39,7 @@ async function redisCall(path, opts = {}) {
 }
 
 const CONFIG_KEY = "quai_monitor_config";
+const SUBS_KEY = "quai_monitor_tag_submissions";
 const DEFAULT_THRESHOLD_PCT = 1;
 
 async function redisGet(key) {
@@ -68,12 +69,15 @@ module.exports = async (req, res) => {
           ? Number(config.whaleTxPercent)
           : 0.5,
     };
-    // The private watchlist is only returned when the secret is supplied.
+    out.publicTags = Array.isArray(config.publicTags) ? config.publicTags : [];
+    // The private watchlist and pending tag queue need the secret.
     const qsSecret = (req.query && req.query.secret) || "";
     if (process.env.CRON_SECRET && qsSecret === process.env.CRON_SECRET) {
       out.watchedAddresses = Array.isArray(config.watchedAddresses)
         ? config.watchedAddresses
         : [];
+      const subs = await redisGet(SUBS_KEY);
+      out.pendingTags = Array.isArray(subs) ? subs : [];
     }
     return res.status(200).json(out);
   }
@@ -124,6 +128,51 @@ module.exports = async (req, res) => {
         cleaned.push({ addr, label });
       }
       next.watchedAddresses = cleaned;
+    }
+    if (body.publicTags !== undefined) {
+      if (!Array.isArray(body.publicTags) || body.publicTags.length > 200) {
+        return res
+          .status(400)
+          .json({ error: "publicTags must be an array of at most 200 entries" });
+      }
+      const cleanedTags = [];
+      for (const w of body.publicTags) {
+        const addr = w && typeof w.addr === "string" ? w.addr.trim() : "";
+        if (!/^0x[0-9a-fA-F]{40}$/.test(addr)) {
+          return res
+            .status(400)
+            .json({ error: `invalid tag address: "${addr.slice(0, 50)}"` });
+        }
+        let label = w && typeof w.label === "string" ? w.label : "";
+        label = label.replace(/[<>&"'`]/g, "").replace(/\s+/g, " ").trim().slice(0, 40);
+        if (!label) {
+          return res.status(400).json({ error: `label required for ${addr.slice(0, 12)}…` });
+        }
+        cleanedTags.push({ addr: addr.toLowerCase(), label });
+      }
+      next.publicTags = cleanedTags;
+    }
+
+    // Approve / reject pending tag suggestions
+    if (Array.isArray(body.approveIds) || Array.isArray(body.rejectIds)) {
+      const approve = new Set(body.approveIds || []);
+      const reject = new Set(body.rejectIds || []);
+      const subs = (await redisGet(SUBS_KEY)) || [];
+      const remaining = [];
+      const tags = Array.isArray(next.publicTags) ? next.publicTags : [];
+      for (const p of subs) {
+        if (approve.has(p.id)) {
+          // Approving replaces any existing tag for that address.
+          const filtered = tags.filter((t) => t.addr !== p.addr);
+          filtered.push({ addr: p.addr, label: p.label });
+          next.publicTags = filtered;
+          tags.length = 0;
+          tags.push(...next.publicTags);
+        } else if (!reject.has(p.id)) {
+          remaining.push(p);
+        }
+      }
+      await redisSet(SUBS_KEY, remaining);
     }
     await redisSet(CONFIG_KEY, next);
     return res.status(200).json({

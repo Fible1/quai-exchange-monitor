@@ -232,6 +232,14 @@
   .whale-row.neutral .whale-amt { color: var(--text); }
   .whale-route { color: var(--muted); }
   .whale-route b { color: var(--text); font-weight: 600; }
+  .whale-route .ptag { color: var(--text); border-bottom: 1px dotted var(--muted); }
+  .whale-route a.suggest {
+    color: var(--muted);
+    text-decoration: none;
+    border-bottom: 1px dashed var(--line);
+    cursor: pointer;
+  }
+  .whale-route a.suggest:hover { color: var(--text); border-bottom-color: var(--muted); }
   .whale-row a {
     margin-left: auto;
     color: var(--muted);
@@ -454,12 +462,15 @@
     Balances sampled every 5 min via Quai RPC ·
     <b class="in">▲ inflow</b> to exchange ·
     <b class="out">▼ outflow</b> from exchange
-    <span class="ver">v27-prune-stale</span>
+    <span class="ver">v28-tags-markers</span>
   </footer>
 </div>
 
 <script>
 const fmt = n => n.toLocaleString("en-US", { maximumFractionDigits: 0 });
+const esc = s => String(s).replace(/[&<>"']/g, c => ({"&":"&amp;","<":"&lt;",">":"&gt;",'"':"&quot;","'":"&#39;"}[c]));
+let publicTags = {};   // approved community tags {addrLower: label}
+let corrAlerts = [];   // correlation alerts for chart markers
 const fmtPct = n => {
   const a = Math.abs(n);
   // enough decimals to show ~2 significant digits, capped at 4
@@ -518,6 +529,10 @@ async function refresh() {
       dot.classList.add("stale");
     }
 
+    publicTags = s.publicTags || {};
+    corrAlerts = (s.alerts || []).filter(a => a.type === "correlation");
+    if (chartData) renderChart();
+
     // header stats: live price + 24h gross volume
     if (s.price && s.price.usd) {
       document.getElementById("price-stat").textContent =
@@ -534,7 +549,7 @@ async function refresh() {
     // threshold heading + settings prefill (don't clobber while typing)
     if (s.thresholdPercent) {
       document.getElementById("alerts-heading").textContent =
-        "Alerts · 24h net change > " + s.thresholdPercent + "%";
+        "Alerts · 24h move > " + s.thresholdPercent + "% of combined holdings";
     }
 
     // cards
@@ -616,10 +631,16 @@ async function refresh() {
     }
     const short = a => a ? a.slice(0, 8) + "…" + a.slice(-4) : "?";
     if (s.whaleTxs && s.whaleTxs.length) {
+      const partLabel = (addr, exTag) => {
+        if (exTag) return `<b>${esc(exTag)}</b>`;
+        const tag = publicTags[addr];
+        if (tag) return `<span class="ptag" title="${esc(addr)}">${esc(tag)}</span>`;
+        return `<a href="#" class="suggest" data-addr="${esc(addr)}" title="suggest a tag for this address">${short(addr)}</a>`;
+      };
       const rows = s.whaleTxs.map((tx, i) => {
         const cls = tx.toTag ? "deposit" : tx.fromTag ? "withdrawal" : "neutral";
-        const fromLabel = tx.fromTag ? `<b>${tx.fromTag}</b>` : short(tx.from);
-        const toLabel = tx.toTag ? `<b>${tx.toTag}</b>` : short(tx.to);
+        const fromLabel = partLabel(tx.from, tx.fromTag);
+        const toLabel = partLabel(tx.to, tx.toTag);
         const badge = tx.toTag ? "▲ deposit" : tx.fromTag ? "▼ withdrawal" : "→ transfer";
         const hide = i >= 10 ? " whale-extra" : "";
         return `
@@ -652,6 +673,25 @@ async function refresh() {
     } else if (s.whaleScan && !s.whaleScan.error) {
       wl.innerHTML = '<div class="empty">No transfers above the threshold seen yet — the feed populates as whale-sized moves happen on-chain.</div>';
     }
+    wl.onclick = async (ev) => {
+      const a = ev.target.closest("a.suggest");
+      if (!a) return;
+      ev.preventDefault();
+      const addr = a.dataset.addr;
+      const label = window.prompt("Suggest a tag for " + addr + "\n(3-40 characters, reviewed before going live):");
+      if (!label) return;
+      try {
+        const r = await fetch("/api/suggest-tag", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ addr, label }),
+        });
+        const j = await r.json();
+        window.alert(r.ok ? "Thanks — suggestion submitted for review." : (j.error || "Submission failed."));
+      } catch (_) {
+        window.alert("Submission failed — network error.");
+      }
+    };
   } catch (e) {
     // Keep whatever is already rendered; just say the live feed is unreachable.
     document.getElementById("last-check").textContent = "live feed unreachable";
@@ -743,6 +783,35 @@ function renderChart() {
     return px;
   });
 
+  // Divergence markers: one point per correlation alert, on the price line
+  const mkMarker = (kind, color, label) => {
+    const data = buckets.map(() => null);
+    for (const a of corrAlerts) {
+      if (a.kind !== kind) continue;
+      const t = new Date(a.time).getTime();
+      if (t < cutoff || t > nowMs) continue;
+      const idx = Math.min(buckets.length - 1, Math.max(0, bucketIndex(t)));
+      if (priceAt[idx] !== null) data[idx] = priceAt[idx];
+    }
+    return {
+      type: "line",
+      label,
+      data,
+      showLine: false,
+      pointStyle: "rectRot",
+      pointRadius: data.map(v => v === null ? 0 : 7),
+      pointHoverRadius: data.map(v => v === null ? 0 : 9),
+      borderColor: color,
+      backgroundColor: color,
+      yAxisID: "yPrice",
+      order: 0,
+    };
+  };
+  const markerSets = [
+    mkMarker("BULLISH", "#3fb68b", "bullish divergence"),
+    mkMarker("BEARISH", "#e4342b", "bearish divergence"),
+  ].filter(d => d.data.some(v => v !== null));
+
   const intervalLabel = bucketMs === 3600000 ? "1-hour" : "6-hour";
   note.textContent = anyFlow
     ? `bars: average net flow across the 3 wallets per ${intervalLabel} interval (▲ inflow, ▼ outflow) · line: QUAI/USD`
@@ -782,7 +851,7 @@ function renderChart() {
   const cfg = {
     data: {
       labels: buckets,
-      datasets: [priceSet, ...barSets],
+      datasets: [priceSet, ...barSets, ...markerSets],
     },
     options: {
       responsive: true,
@@ -820,6 +889,9 @@ function renderChart() {
           callbacks: {
             title: (items) => items.length ? new Date(buckets[items[0].dataIndex]).toLocaleString() : "",
             label: (item) => {
+              if (item.dataset.label && item.dataset.label.includes("divergence")) {
+                return " ⚡ " + item.dataset.label;
+              }
               if (item.dataset.label === "QUAI/USD") {
                 return item.parsed.y === null ? null : ` QUAI/USD: $${item.parsed.y}`;
               }

@@ -430,6 +430,10 @@ module.exports = async (req, res) => {
     const fired = [];
     let corrFired = null;
 
+    // Combined holdings across all watched wallets — the shared denominator
+    // for per-exchange alerts (same basis as the whale feed threshold).
+    const totalNow = Object.values(balances).reduce((s, v) => s + v, 0);
+
     for (const [addr, bal] of Object.entries(balances)) {
       const name = WATCHED[addr];
       const prev = state.exchanges[addr] || {};
@@ -448,10 +452,15 @@ module.exports = async (req, res) => {
       const monthPct =
         monthRef && monthRef.bal > 0 ? (monthDelta / monthRef.bal) * 100 : null;
 
-      // Edge-triggered alert on the 24h (or partial-window) change
+      // Edge-triggered alert on the 24h (or partial-window) change.
+      // Trigger basis: the wallet's move as a percent of COMBINED holdings
+      // across all watched exchanges, so every wallet alerts at the same
+      // absolute QUAI move (same basis as the whale feed).
       let alertActive = Boolean(prev.alertActive);
-      if (dayPct !== null) {
-        const magnitude = Math.abs(dayPct);
+      const basisPct =
+        dayDelta !== null && totalNow > 0 ? (dayDelta / totalNow) * 100 : null;
+      if (basisPct !== null) {
+        const magnitude = Math.abs(basisPct);
         if (!alertActive && magnitude > thresholdPct) {
           alertActive = true;
           const dir = dayDelta > 0 ? "INFLOW" : "OUTFLOW";
@@ -465,7 +474,8 @@ module.exports = async (req, res) => {
             direction: dir,
             window: windowLabel,
             delta: dayDelta,
-            deltaPct: dayPct,
+            deltaPct: basisPct,   // % of combined holdings (what triggered)
+            walletPct: dayPct,    // % of this wallet's own balance (context)
             threshold: thresholdPct,
             from: dayRef.bal,
             to: bal,
@@ -508,7 +518,6 @@ module.exports = async (req, res) => {
     }
 
     // --- Aggregate total across all watched wallets (for trend chart) -----
-    const totalNow = Object.values(balances).reduce((s, v) => s + v, 0);
     state.totalExchange = { quai: totalNow, at: now };
 
     // --- 24h gross transfer volume across the hot wallets ------------------
@@ -655,6 +664,19 @@ module.exports = async (req, res) => {
     } catch (e) {
       console.error("correlation check failed:", e);
     }
+    // Approved public counterparty tags -> state (single-read status stays cheap)
+    const publicTags = {};
+    if (Array.isArray(config.publicTags)) {
+      for (const w of config.publicTags) {
+        if (w && typeof w.addr === "string" && /^0x[0-9a-fA-F]{40}$/.test(w.addr)) {
+          const lbl = typeof w.label === "string" && w.label.trim();
+          if (lbl) publicTags[w.addr.toLowerCase()] = lbl.slice(0, 40);
+        }
+      }
+    }
+    state.publicTags = publicTags;
+    state.alerts = state.alerts.slice(0, 20);
+
     state.lastCheck = now;
     state.thresholdPercent = thresholdPct;
     await redisSet(STATE_KEY, state);

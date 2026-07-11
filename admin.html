@@ -46,6 +46,22 @@
     font-size: .78rem; padding: .55rem .7rem; resize: vertical;
   }
   textarea:focus { outline: 2px solid var(--crimson); outline-offset: 1px; }
+  .pending {
+    background: var(--ink); border: 1px solid var(--line); border-radius: 6px;
+    padding: .4rem .6rem; font-family: var(--mono); font-size: .74rem;
+  }
+  .pending-empty { color: var(--muted); }
+  .pending-row {
+    display: flex; align-items: center; gap: .6rem; flex-wrap: wrap;
+    padding: .45rem 0; border-bottom: 1px solid var(--line);
+  }
+  .pending-row:last-child { border-bottom: none; }
+  .pending-row code { color: var(--muted); }
+  .pending-row .plabel { color: var(--text); font-weight: 600; }
+  .pending-row button {
+    margin: 0; width: auto; padding: .3rem .7rem; font-size: .72rem;
+  }
+  .pending-row button.reject { background: var(--panel); border: 1px solid var(--line); color: var(--muted); }
   .btnrow { display: flex; gap: .7rem; margin-top: 1.4rem; }
   .btnrow button { margin-top: 0; flex: 1; }
   button.secondary { background: var(--panel); border: 1px solid var(--line); color: var(--text); }
@@ -73,7 +89,7 @@
   <div class="sub">Alert configuration · changes require the secret</div>
 
   <div class="panel">
-    <label for="pct">Alert when the 24h net change exceeds (%)</label>
+    <label for="pct">Alert when a wallet's 24h move exceeds (% of combined 3-exchange holdings)</label>
     <input id="pct" type="number" min="0.01" max="100" step="0.01">
 
     <label for="whale">Whale feed: log transfers ≥ (% of combined watched balance)</label>
@@ -81,6 +97,12 @@
 
     <label for="watchlist">Watched addresses (private) — any incoming tx alerts your phone/email. One per line: address, then optional label</label>
     <textarea id="watchlist" rows="5" spellcheck="false" placeholder="0x0050AF0000000000000000000000000000000000 my cold wallet"></textarea>
+
+    <label for="ptags">Public counterparty tags — shown to everyone in the whale feed. One per line: address, then label</label>
+    <textarea id="ptags" rows="5" spellcheck="false" placeholder="0x00177e9305777f6abcc97c1f907844e13b5cc934 arb bot?"></textarea>
+
+    <label>Pending tag suggestions</label>
+    <div id="pending" class="pending"><span class="pending-empty">Load settings to review suggestions.</span></div>
 
     <label for="secret">Secret</label>
     <input id="secret" type="password" placeholder="CRON_SECRET" autocomplete="off">
@@ -119,11 +141,16 @@ document.getElementById("load").addEventListener("click", async () => {
     const j = await r.json();
     if (j.thresholdPercent) document.getElementById("pct").value = j.thresholdPercent;
     if (j.whaleTxPercent) document.getElementById("whale").value = j.whaleTxPercent;
+    if (Array.isArray(j.publicTags)) {
+      document.getElementById("ptags").value = j.publicTags
+        .map(w => w.addr + " " + w.label).join("\n");
+    }
     if (Array.isArray(j.watchedAddresses)) {
       document.getElementById("watchlist").value = j.watchedAddresses
         .map(w => w.addr + (w.label ? " " + w.label : ""))
         .join("\n");
-      msg.textContent = `Loaded ${j.watchedAddresses.length} watched address(es).`;
+      renderPending(j.pendingTags || []);
+      msg.textContent = `Loaded ${j.watchedAddresses.length} watched, ${(j.publicTags||[]).length} tags, ${(j.pendingTags||[]).length} pending.`;
       msg.className = "ok";
     } else {
       msg.textContent = "Wrong secret — watchlist not returned.";
@@ -134,6 +161,62 @@ document.getElementById("load").addEventListener("click", async () => {
     msg.className = "err";
   }
 });
+
+function renderPending(list) {
+  const box = document.getElementById("pending");
+  if (!list.length) {
+    box.innerHTML = '<span class="pending-empty">No pending suggestions.</span>';
+    return;
+  }
+  const esc = s => String(s).replace(/[&<>"']/g, c => ({"&":"&amp;","<":"&lt;",">":"&gt;",'"':"&quot;","'":"&#39;"}[c]));
+  box.innerHTML = list.map(p => `
+    <div class="pending-row">
+      <code>${esc(p.addr.slice(0,10))}…${esc(p.addr.slice(-6))}</code>
+      <span class="plabel">${esc(p.label)}</span>
+      <button data-id="${esc(p.id)}" data-act="approve">Approve</button>
+      <button data-id="${esc(p.id)}" data-act="reject" class="reject">Reject</button>
+    </div>`).join("");
+  box.onclick = async (ev) => {
+    const b = ev.target.closest("button[data-id]");
+    if (!b) return;
+    const secret = document.getElementById("secret").value;
+    const msg = document.getElementById("msg");
+    if (!secret) { msg.textContent = "Enter the secret first."; msg.className = "err"; return; }
+    const payload = { secret };
+    payload[b.dataset.act === "approve" ? "approveIds" : "rejectIds"] = [b.dataset.id];
+    const r = await fetch("/api/config", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(payload),
+    });
+    if (r.ok) {
+      msg.textContent = b.dataset.act === "approve" ? "Approved — tag is now live." : "Rejected.";
+      msg.className = "ok";
+      document.getElementById("load").click();
+    } else {
+      const j = await r.json();
+      msg.textContent = j.error || "Action failed.";
+      msg.className = "err";
+    }
+  };
+}
+
+function parsePtags() {
+  const lines = document.getElementById("ptags").value
+    .split("\n").map(l => l.trim()).filter(Boolean);
+  const out = [];
+  for (const line of lines) {
+    const sp = line.indexOf(" ");
+    if (sp === -1) return { error: `Tag label required: "${line.slice(0, 30)}…"` };
+    const addr = line.slice(0, sp);
+    const label = line.slice(sp + 1).trim();
+    if (!/^0x[0-9a-fA-F]{40}$/.test(addr)) return { error: `Invalid tag address: "${addr.slice(0, 30)}…"` };
+    if (!label) return { error: `Tag label required for ${addr.slice(0, 12)}…` };
+    out.push({ addr, label });
+  }
+  if (out.length > 200) return { error: "Maximum 200 public tags." };
+  return { list: out };
+}
 
 function parseWatchlist() {
   const lines = document.getElementById("watchlist").value
@@ -175,6 +258,12 @@ document.getElementById("save").addEventListener("click", async () => {
     msg.className = "err";
     return;
   }
+  const pt = parsePtags();
+  if (pt.error) {
+    msg.textContent = pt.error;
+    msg.className = "err";
+    return;
+  }
   if (!secret) {
     msg.textContent = "Enter the secret to save.";
     msg.className = "err";
@@ -186,7 +275,7 @@ document.getElementById("save").addEventListener("click", async () => {
     const r = await fetch("/api/config", {
       method: "POST",
       headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ thresholdPercent: pct, whaleTxPercent: whale, watchedAddresses: wl.list, secret }),
+      body: JSON.stringify({ thresholdPercent: pct, whaleTxPercent: whale, watchedAddresses: wl.list, publicTags: pt.list, secret }),
     });
     const j = await r.json();
     if (r.ok) {
