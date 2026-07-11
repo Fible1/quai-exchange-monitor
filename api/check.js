@@ -9,7 +9,6 @@
 const WATCHED = {
   "0x006243e4eE6C2CF6F993036f27f0A88f265Ddb4a": "MEXC hot",
   "0x007e2F1a4709B812F339f22E18032118FBcc8987": "Gate.io hot",
-  "0x0075B7f9F9B07c9cB9797926399F7298Edf5E182": "Kraken hot",
 };
 
 const DEFAULT_THRESHOLD_PCT = 1; // alert if 24h net change exceeds 1%

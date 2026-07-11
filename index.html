@@ -480,7 +480,7 @@
     Balances sampled every 5 min via Quai RPC ·
     <b class="in">▲ inflow</b> to exchange ·
     <b class="out">▼ outflow</b> from exchange
-    <span class="ver">v30-bigger-text</span>
+    <span class="ver">v31-two-exchanges</span>
   </footer>
 </div>
 
@@ -722,7 +722,7 @@ refresh();
 setInterval(refresh, 60000);
 
 // --- price vs flows chart ------------------------------------------------
-const FLOW_COLORS = { "MEXC hot": "#e4342b", "Gate.io hot": "#3fb68b", "Kraken hot": "#6aa2ff" };
+const FLOW_COLORS = { "MEXC hot": "#e4342b", "Gate.io hot": "#3fb68b" };
 const PRICE_COLOR = "#f0b429";
 let chartData = null;
 let chart = null;
@@ -759,8 +759,7 @@ function renderChart() {
   const bucketIndex = (t) => Math.floor((t - firstBucket) / bucketMs);
 
   const addrNames = { "0x006243e4eE6C2CF6F993036f27f0A88f265Ddb4a": "MEXC hot",
-                      "0x007e2F1a4709B812F339f22E18032118FBcc8987": "Gate.io hot",
-                      "0x0075B7f9F9B07c9cB9797926399F7298Edf5E182": "Kraken hot" };
+                      "0x007e2F1a4709B812F339f22E18032118FBcc8987": "Gate.io hot" };
 
   // Per-interval net flow: delta between consecutive samples, spread evenly
   // across the buckets the gap covers (handles thinned older samples honestly).
@@ -781,7 +780,7 @@ function renderChart() {
   }
   const anyFlow = Object.values(flows).some(arr => arr.some(v => v !== 0));
 
-  // One bar per interval: the average of the three wallets' net flows
+  // One bar per interval: the average of the watched wallets' net flows
   const addrs = Object.keys(addrNames);
   const avgFlow = buckets.map((_, i) => {
     let sum = 0;
@@ -832,7 +831,7 @@ function renderChart() {
 
   const intervalLabel = bucketMs === 3600000 ? "1-hour" : "6-hour";
   note.textContent = anyFlow
-    ? `bars: average net flow across the 3 wallets per ${intervalLabel} interval (▲ inflow, ▼ outflow) · line: QUAI/USD`
+    ? `bars: average net flow across the watched wallets per ${intervalLabel} interval (▲ inflow, ▼ outflow) · line: QUAI/USD`
     : `collecting flow history — bars fill in as samples accumulate · showing ${intervalLabel} intervals`;
 
   const barSets = [{
@@ -949,7 +948,6 @@ function renderTrend() {
   const addrs = Object.keys({
     "0x006243e4eE6C2CF6F993036f27f0A88f265Ddb4a": 1,
     "0x007e2F1a4709B812F339f22E18032118FBcc8987": 1,
-    "0x0075B7f9F9B07c9cB9797926399F7298Edf5E182": 1,
   });
 
   const samples = (chartData.history || [])
