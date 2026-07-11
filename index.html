@@ -48,7 +48,7 @@
     padding-bottom: 1.25rem;
     margin-bottom: 2rem;
   }
-  h1 { font-size: 1.15rem; font-weight: 700; letter-spacing: .02em; }
+  h1 { font-size: 1.7rem; font-weight: 700; letter-spacing: .01em; }
   h1 span { color: var(--crimson); }
   .status-line {
     font-family: var(--mono);
@@ -58,6 +58,40 @@
     align-items: center;
     gap: .5rem;
   }
+  .header-stats {
+    width: 100%;
+    display: flex;
+    gap: 1rem;
+    flex-wrap: wrap;
+    margin-top: 1rem;
+  }
+  .hstat {
+    flex: 1;
+    min-width: 160px;
+    background: var(--panel);
+    border: 1px solid var(--line);
+    border-radius: 10px;
+    padding: .9rem 1.1rem;
+    display: flex;
+    flex-direction: column;
+    gap: .35rem;
+  }
+  .hstat-label {
+    font-family: var(--mono);
+    font-size: .7rem;
+    text-transform: uppercase;
+    letter-spacing: .12em;
+    color: var(--muted);
+  }
+  .hstat-value {
+    font-family: var(--mono);
+    font-size: 1.2rem;
+    font-weight: 600;
+    font-variant-numeric: tabular-nums;
+    color: var(--text);
+    line-height: 1.1;
+  }
+  .hstat-value small { font-size: .6rem; color: var(--muted); font-weight: 400; }
   .dot {
     width: 8px; height: 8px; border-radius: 50%;
     background: var(--jade);
@@ -342,6 +376,16 @@
       <span class="dot" id="dot"></span>
       <span id="last-check">loading…</span>
     </div>
+    <div class="header-stats">
+      <div class="hstat">
+        <span class="hstat-label">QUAI price</span>
+        <span class="hstat-value" id="price-stat">—</span>
+      </div>
+      <div class="hstat">
+        <span class="hstat-label">24h hot-wallet volume</span>
+        <span class="hstat-value" id="vol-stat">—</span>
+      </div>
+    </div>
   </header>
 
   <h2 class="grid-title">Net flow · last 24 hours
@@ -410,7 +454,7 @@
     Balances sampled every 5 min via Quai RPC ·
     <b class="in">▲ inflow</b> to exchange ·
     <b class="out">▼ outflow</b> from exchange
-    <span class="ver">v20-private-watch</span>
+    <span class="ver">v27-prune-stale</span>
   </footer>
 </div>
 
@@ -472,6 +516,19 @@ async function refresh() {
     } else {
       lc.textContent = "waiting for first check…";
       dot.classList.add("stale");
+    }
+
+    // header stats: live price + 24h gross volume
+    if (s.price && s.price.usd) {
+      document.getElementById("price-stat").textContent =
+        "$" + Number(s.price.usd).toLocaleString("en-US", { maximumSignificantDigits: 4 });
+    }
+    if (s.volume24h && s.volume24h.quai !== undefined) {
+      const v = s.volume24h.quai;
+      const txt = (v >= 1e6 ? (v/1e6).toFixed(2) + "M" : v >= 1e3 ? (v/1e3).toFixed(0) + "K" : Math.round(v)) + " QUAI";
+      const partial = s.volume24h.partial
+        ? ' <small>(partial · ' + s.volume24h.hours + 'h so far)</small>' : '';
+      document.getElementById("vol-stat").innerHTML = txt + partial;
     }
 
     // threshold heading + settings prefill (don't clobber while typing)
@@ -607,7 +664,7 @@ refresh();
 setInterval(refresh, 60000);
 
 // --- price vs flows chart ------------------------------------------------
-const FLOW_COLORS = { "MEXC": "#e4342b", "Gate.io": "#3fb68b", "Kraken cold": "#6aa2ff" };
+const FLOW_COLORS = { "MEXC hot": "#e4342b", "Gate.io hot": "#3fb68b", "Kraken hot": "#6aa2ff" };
 const PRICE_COLOR = "#f0b429";
 let chartData = null;
 let chart = null;
@@ -643,9 +700,9 @@ function renderChart() {
   for (let t = firstBucket; t <= nowMs; t += bucketMs) buckets.push(t);
   const bucketIndex = (t) => Math.floor((t - firstBucket) / bucketMs);
 
-  const addrNames = { "0x006243e4eE6C2CF6F993036f27f0A88f265Ddb4a": "MEXC",
-                      "0x007e2F1a4709B812F339f22E18032118FBcc8987": "Gate.io",
-                      "0x004cd3a9997a5170A9234CEddD1ec5DCE7Db23c3": "Kraken cold" };
+  const addrNames = { "0x006243e4eE6C2CF6F993036f27f0A88f265Ddb4a": "MEXC hot",
+                      "0x007e2F1a4709B812F339f22E18032118FBcc8987": "Gate.io hot",
+                      "0x0075B7f9F9B07c9cB9797926399F7298Edf5E182": "Kraken hot" };
 
   // Per-interval net flow: delta between consecutive samples, spread evenly
   // across the buckets the gap covers (handles thinned older samples honestly).
@@ -802,7 +859,7 @@ function renderTrend() {
   const addrs = Object.keys({
     "0x006243e4eE6C2CF6F993036f27f0A88f265Ddb4a": 1,
     "0x007e2F1a4709B812F339f22E18032118FBcc8987": 1,
-    "0x004cd3a9997a5170A9234CEddD1ec5DCE7Db23c3": 1,
+    "0x0075B7f9F9B07c9cB9797926399F7298Edf5E182": 1,
   });
 
   const samples = (chartData.history || [])

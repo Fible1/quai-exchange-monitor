@@ -7,9 +7,9 @@
 // threshold, re-armed when it falls back below 80% of the threshold.
 
 const WATCHED = {
-  "0x006243e4eE6C2CF6F993036f27f0A88f265Ddb4a": "MEXC",
-  "0x007e2F1a4709B812F339f22E18032118FBcc8987": "Gate.io",
-  "0x004cd3a9997a5170A9234CEddD1ec5DCE7Db23c3": "Kraken cold",
+  "0x006243e4eE6C2CF6F993036f27f0A88f265Ddb4a": "MEXC hot",
+  "0x007e2F1a4709B812F339f22E18032118FBcc8987": "Gate.io hot",
+  "0x0075B7f9F9B07c9cB9797926399F7298Edf5E182": "Kraken hot",
 };
 
 const DEFAULT_THRESHOLD_PCT = 1; // alert if 24h net change exceeds 1%
@@ -493,9 +493,51 @@ module.exports = async (req, res) => {
       };
     }
 
+    // Self-clean: drop any stored wallet no longer in WATCHED (e.g. after an
+    // address swap), so stale cards can't linger in the dashboard.
+    const watchedLower = new Set(Object.keys(WATCHED).map((a) => a.toLowerCase()));
+    for (const addr of Object.keys(state.exchanges)) {
+      if (!watchedLower.has(addr.toLowerCase())) delete state.exchanges[addr];
+    }
+    for (const s of state.history) {
+      if (s && s.b) {
+        for (const addr of Object.keys(s.b)) {
+          if (!watchedLower.has(addr.toLowerCase())) delete s.b[addr];
+        }
+      }
+    }
+
     // --- Aggregate total across all watched wallets (for trend chart) -----
     const totalNow = Object.values(balances).reduce((s, v) => s + v, 0);
     state.totalExchange = { quai: totalNow, at: now };
+
+    // --- 24h gross transfer volume across the hot wallets ------------------
+    // Sum of |balance change| between consecutive samples in the last 24h,
+    // across all watched wallets (churn, not net).
+    {
+      const dayAgo = nowMs - DAY_MS;
+      let vol = 0;
+      const recent = state.history.filter((s) => new Date(s.t).getTime() >= dayAgo);
+      for (let i = 1; i < recent.length; i++) {
+        for (const a of Object.keys(WATCHED)) {
+          const p = recent[i - 1].b[a];
+          const q = recent[i].b[a];
+          if (p !== undefined && q !== undefined) vol += Math.abs(q - p);
+        }
+      }
+      // Include movement since the most recent sample
+      if (recent.length) {
+        const lastS = recent[recent.length - 1];
+        for (const a of Object.keys(WATCHED)) {
+          if (lastS.b[a] !== undefined && balances[a] !== undefined) {
+            vol += Math.abs(balances[a] - lastS.b[a]);
+          }
+        }
+      }
+      const oldestRecent = recent.length ? new Date(recent[0].t).getTime() : nowMs;
+      const coverageH = Math.round((nowMs - oldestRecent) / 3600000);
+      state.volume24h = { quai: vol, at: now, partial: coverageH < 23, hours: coverageH };
+    }
 
     // --- Whale transaction feed --------------------------------------------
     const whalePct =

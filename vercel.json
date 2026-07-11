@@ -6,7 +6,7 @@
     }
   ],
   "functions": {
-    "api/check.js": {
+    "api/*.js": {
       "maxDuration": 60
     }
   }
