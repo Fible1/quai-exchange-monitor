@@ -29,6 +29,7 @@
     --sans: "Space Grotesk", sans-serif;
   }
   * { margin: 0; padding: 0; box-sizing: border-box; }
+  html { font-size: 115%; }  /* +15% on all rem-based text */
   body {
     background: var(--ink);
     color: var(--text);
@@ -48,7 +49,7 @@
     padding-bottom: 1.25rem;
     margin-bottom: 2rem;
   }
-  h1 { font-size: 1.7rem; font-weight: 700; letter-spacing: .01em; }
+  h1 { font-size: 1.48rem; font-weight: 700; letter-spacing: .01em; }  /* 1.7rem visual after the 115% root scale */
   h1 span { color: var(--crimson); }
   .status-line {
     font-family: var(--mono);
@@ -204,6 +205,22 @@
   }
   .banner.show { display: block; }
   .whale-section { margin-bottom: 2.5rem; }
+  .whale-hint {
+    display: block;
+    margin-top: .35rem;
+    color: var(--muted);
+    font-size: .68rem;
+    text-transform: none;
+    letter-spacing: 0;
+    font-family: var(--mono);
+  }
+  .whale-hint .hint-underline {
+    color: var(--muted);
+    text-decoration: none;
+    border-bottom: 1px dashed var(--line);
+    cursor: default;
+    pointer-events: none;
+  }
   .whale-list {
     background: var(--panel);
     border: 1px solid var(--line);
@@ -406,6 +423,7 @@
   <section class="whale-section">
     <h2 class="grid-title">Whale feed
       <small id="whale-sub">large on-chain transfers, scanning every block</small>
+      <small class="whale-hint">💡 know who an address belongs to? Click any <a href="#" class="hint-underline">underlined address</a> to suggest a tag — approved tags are shown to everyone</small>
     </h2>
     <div class="whale-list" id="whale-list">
       <div class="empty">Scanning begins with the next check cycle.</div>
@@ -462,7 +480,7 @@
     Balances sampled every 5 min via Quai RPC ·
     <b class="in">▲ inflow</b> to exchange ·
     <b class="out">▼ outflow</b> from exchange
-    <span class="ver">v28-tags-markers</span>
+    <span class="ver">v30-bigger-text</span>
   </footer>
 </div>
 
@@ -862,14 +880,14 @@ function renderChart() {
         x: {
           ticks: { color: "#8b949e", maxTicksLimit: 8,
                    callback: (v, i) => fmtTick(buckets[i]),
-                   font: { family: "IBM Plex Mono", size: 10 } },
+                   font: { family: "IBM Plex Mono", size: 12 } },
           grid: { color: "#262c33" },
         },
         yFlow: {
           position: "left",
           title: { display: true, text: "avg net flow / interval (QUAI)", color: "#8b949e",
-                   font: { family: "IBM Plex Mono", size: 10 } },
-          ticks: { color: "#8b949e", font: { family: "IBM Plex Mono", size: 10 },
+                   font: { family: "IBM Plex Mono", size: 12 } },
+          ticks: { color: "#8b949e", font: { family: "IBM Plex Mono", size: 12 },
                    callback: (v) => Math.abs(v) >= 1e6 ? (v/1e6).toFixed(1) + "M"
                                   : Math.abs(v) >= 1e3 ? (v/1e3).toFixed(0) + "K" : v },
           grid: { color: "#262c33" },
@@ -877,14 +895,14 @@ function renderChart() {
         yPrice: {
           position: "right",
           title: { display: true, text: "QUAI/USD", color: PRICE_COLOR,
-                   font: { family: "IBM Plex Mono", size: 10 } },
-          ticks: { color: PRICE_COLOR, font: { family: "IBM Plex Mono", size: 10 } },
+                   font: { family: "IBM Plex Mono", size: 12 } },
+          ticks: { color: PRICE_COLOR, font: { family: "IBM Plex Mono", size: 12 } },
           grid: { drawOnChartArea: false },
         },
       },
       plugins: {
         legend: { labels: { color: "#e8eaed", boxWidth: 14,
-                            font: { family: "Space Grotesk", size: 11 } } },
+                            font: { family: "Space Grotesk", size: 13 } } },
         tooltip: {
           callbacks: {
             title: (items) => items.length ? new Date(buckets[items[0].dataIndex]).toLocaleString() : "",
@@ -997,14 +1015,14 @@ function renderTrend() {
           min: cutoff,
           max: nowMs,
           ticks: { color: "#8b949e", maxTicksLimit: 8, callback: (v) => fmtTick(v),
-                   font: { family: "IBM Plex Mono", size: 10 } },
+                   font: { family: "IBM Plex Mono", size: 12 } },
           grid: { color: "#262c33" },
         },
         yTotal: {
           position: "left",
           title: { display: true, text: "total on exchanges (QUAI)", color: "#6aa2ff",
-                   font: { family: "IBM Plex Mono", size: 10 } },
-          ticks: { color: "#6aa2ff", font: { family: "IBM Plex Mono", size: 10 },
+                   font: { family: "IBM Plex Mono", size: 12 } },
+          ticks: { color: "#6aa2ff", font: { family: "IBM Plex Mono", size: 12 },
                    callback: (v) => Math.abs(v) >= 1e6 ? (v/1e6).toFixed(1) + "M"
                                   : Math.abs(v) >= 1e3 ? (v/1e3).toFixed(0) + "K" : v },
           grid: { color: "#262c33" },
@@ -1012,14 +1030,14 @@ function renderTrend() {
         yPrice: {
           position: "right",
           title: { display: true, text: "QUAI/USD", color: PRICE_COLOR,
-                   font: { family: "IBM Plex Mono", size: 10 } },
-          ticks: { color: PRICE_COLOR, font: { family: "IBM Plex Mono", size: 10 } },
+                   font: { family: "IBM Plex Mono", size: 12 } },
+          ticks: { color: PRICE_COLOR, font: { family: "IBM Plex Mono", size: 12 } },
           grid: { drawOnChartArea: false },
         },
       },
       plugins: {
         legend: { labels: { color: "#e8eaed", boxWidth: 14,
-                            font: { family: "Space Grotesk", size: 11 } } },
+                            font: { family: "Space Grotesk", size: 13 } } },
         tooltip: {
           callbacks: {
             title: (items) => items.length ? new Date(items[0].parsed.x).toLocaleString() : "",
