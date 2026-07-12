@@ -300,6 +300,11 @@ async function scanWhaleTxs(prevCursor, head, thresholdQuai, watchMap = {}) {
         const toAddr = (tx.to || "").toLowerCase();
         const fromAddr = (tx.from || "").toLowerCase();
 
+        // Change outputs: a transaction output paid back to the address that
+        // originated it (from === to). Not a real transfer — skip it for both
+        // the whale feed and watched-address alerts.
+        if (fromAddr && fromAddr === toAddr) continue;
+
         if (quai >= thresholdQuai) {
           found.push({
             t: ts || new Date().toISOString(),
