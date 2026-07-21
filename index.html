@@ -191,6 +191,26 @@
   }
   .addr:hover { color: var(--text); }
 
+  .ntfy-cta {
+    background: linear-gradient(180deg, rgba(63,182,139,.12), rgba(63,182,139,.04));
+    border: 1px solid rgba(63,182,139,.35);
+    border-radius: 10px;
+    padding: .85rem 1.1rem;
+    margin: 0 0 1.4rem;
+    font-family: var(--sans);
+    font-size: .9rem;
+    line-height: 1.5;
+    color: var(--text);
+  }
+  .ntfy-cta strong { color: var(--jade); }
+  .ntfy-cta .steps { color: var(--muted); font-size: .82rem; margin-top: .35rem; }
+  .ntfy-cta code {
+    font-family: var(--mono); background: var(--ink);
+    border: 1px solid var(--line); border-radius: 5px;
+    padding: .05rem .4rem; color: var(--text); font-size: .8rem;
+  }
+  .ntfy-cta a { color: var(--jade); text-decoration: none; border-bottom: 1px solid rgba(63,182,139,.4); }
+  .ntfy-cta a:hover { border-bottom-color: var(--jade); }
   .banner {
     display: none;
     background: rgba(228, 52, 43, .08);
@@ -412,6 +432,13 @@
       </div>
     </div>
   </header>
+
+  <div class="ntfy-cta">
+    🔔 <strong>Get free push alerts</strong> whenever large exchange flows or whale transfers are detected — no signup, no email.
+    <div class="steps">
+      Install the free <a href="https://ntfy.sh" target="_blank" rel="noopener">ntfy</a> app (iOS / Android / web), then subscribe to the topic <code>quai-exchange-movement-alerts</code>. Or open <a href="https://ntfy.sh/quai-exchange-movement-alerts" target="_blank" rel="noopener">ntfy.sh/quai-exchange-movement-alerts</a> in your browser.
+    </div>
+  </div>
 
   <h2 class="grid-title">Net flow · last 24 hours
     <small>cumulative balance change per exchange over the past day</small>
